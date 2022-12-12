@@ -345,7 +345,13 @@ std::string interp::interpreter::disassemble() const {
             default: result += "???\n"; break;
             case opcode::nop: result += "nop\n"; break;
             case opcode::ret: result += "ret\n"; break;
-            case opcode::push_int: result += fmt::format("pushi {}\n", bytecode[i + 1]); goto print_next;
+            case opcode::push_int:
+                if (i == bytecode.size() - 1) {
+                    result += "pushi ???\n";
+                    break;
+                }
+                result += fmt::format("pushi {}\n", bytecode[i + 1]);
+                goto print_next;
             case opcode::addi: result += "addi\n"; break;
             case opcode::subi: result += "subi\n"; break;
             case opcode::muli: result += "muli\n"; break;
@@ -357,9 +363,27 @@ std::string interp::interpreter::disassemble() const {
             case opcode::shl: result += "shl\n"; break;
             case opcode::sar: result += "sar\n"; break;
             case opcode::shr: result += "shr\n"; break;
-            case opcode::call: result += fmt::format("call {}\n", bytecode[i + 1]); goto print_next;
-            case opcode::jmp: result += fmt::format("jmp {}\n", bytecode[i + 1]); goto print_next;
-            case opcode::jnz: result += fmt::format("jnz {}\n", bytecode[i + 1]); goto print_next;
+            case opcode::call:
+                if (i == bytecode.size() - 1) {
+                    result += "call ???\n";
+                    break;
+                }
+                result += fmt::format("call {}\n", bytecode[i + 1]);
+                goto print_next;
+            case opcode::jmp:
+                if (i == bytecode.size() - 1) {
+                    result += "jmp ???\n";
+                    break;
+                }
+                result += fmt::format("jmp {}\n", bytecode[i + 1]);
+                goto print_next;
+            case opcode::jnz:
+                if (i == bytecode.size() - 1) {
+                    result += "jnz ???\n";
+                    break;
+                }
+                result += fmt::format("jnz {}\n", bytecode[i + 1]);
+                goto print_next;
             case opcode::dup: result += "dup\n"; break;
         }
 

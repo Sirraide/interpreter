@@ -36,7 +36,7 @@ void interp_destroy(interp_handle handle);
 ///         or NULL if there was no error or if the handle was invalid. The
 ///         error message is allocated as if by a call to strdup() and must
 ///         be freed by the caller.
-const char* interp_get_error(interp_handle handle);
+char* interp_get_error(interp_handle handle);
 
 /// Push an integer onto the stack.
 ///
@@ -71,6 +71,14 @@ interp_code interp_defun(
 /// \param handle The interpreter handle.
 /// \return INTERP_OK (0) on success; a nonzero value on failure.
 interp_code interp_run(interp_handle handle);
+
+/// Disassemble the bytecode.
+///
+/// \param handle The interpreter handle.
+/// \return The disassembly of the bytecode, or NULL on error. The string
+///         is allocated as if by a call to strdup() and must be freed by
+///         the caller.
+char* interp_disassemble(interp_handle handle);
 
 /// ===========================================================================
 ///  Operations.

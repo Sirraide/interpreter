@@ -18,7 +18,7 @@ void interp_destroy(interp_handle handle) { delete handle; }
 /// ===========================================================================
 ///  Interpreter misc.
 /// ===========================================================================
-const char* interp_get_error(interp_handle handle) {
+char* interp_get_error(interp_handle handle) {
     auto i = static_cast<interp::interpreter*>(handle);
     if (i == nullptr) return nullptr;
     if (i->last_error.empty()) return nullptr;
@@ -76,6 +76,18 @@ interp_code interp_run(interp_handle handle) {
     } catch (const std::exception& e) {
         i->last_error = e.what();
         return INTERP_ERR;
+    }
+}
+
+char* interp_disassemble(interp_handle handle) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    if (i == nullptr) return nullptr;
+    try {
+        auto str = i->disassemble();
+        return strdup(str.c_str());
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return nullptr;
     }
 }
 
