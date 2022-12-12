@@ -12,8 +12,14 @@ extern "C" {
 
 /// Opaque type.
 typedef struct interp_handle_t* interp_handle;
+
+/// Error code.
 typedef int interp_code;
+
+/// Integer type.
 typedef i64 interp_int;
+
+/// Address type.
 typedef u64 interp_address;
 
 /// ===========================================================================
