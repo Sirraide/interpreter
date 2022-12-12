@@ -59,6 +59,22 @@ void interp::interpreter::create_call(const std::string& name) {
     bytecode.push_back(static_cast<opcode_t>(opcode::call) | (u64(it->second) << 8u));
 }
 
+void interp::interpreter::create_branch(addr target) {
+    bytecode.push_back(static_cast<opcode_t>(opcode::jmp));
+    bytecode.push_back(target);
+}
+
+void interp::interpreter::create_branch_ifnz(addr target) {
+    bytecode.push_back(static_cast<opcode_t>(opcode::jnz));
+    bytecode.push_back(target);
+}
+
+void interp::interpreter::create_dup() {
+    bytecode.push_back(static_cast<opcode_t>(opcode::dup));
+}
+
+auto interp::interpreter::current_addr() const -> addr { return bytecode.size(); }
+
 /// ===========================================================================
 ///  Execute bytecode.
 /// ===========================================================================
@@ -101,7 +117,7 @@ void interp::interpreter::run() {
                 ip++;
                 auto a = pop();
                 auto b = pop();
-                push(a - b);
+                push(b - a);
             } break;
 
             /// Multiply two integers (signed).
@@ -125,7 +141,7 @@ void interp::interpreter::run() {
                 ip++;
                 i64 a = static_cast<i64>(pop());
                 i64 b = static_cast<i64>(pop());
-                push(static_cast<u64>(a / b));
+                push(static_cast<u64>(b / a));
             } break;
 
             /// Divide two integers (unsigned).
@@ -133,7 +149,7 @@ void interp::interpreter::run() {
                 ip++;
                 auto a = pop();
                 auto b = pop();
-                push(a / b);
+                push(b / a);
             } break;
 
             /// Remainder of two integers (signed).
@@ -141,7 +157,7 @@ void interp::interpreter::run() {
                 ip++;
                 i64 a = static_cast<i64>(pop());
                 i64 b = static_cast<i64>(pop());
-                push(static_cast<u64>(a % b));
+                push(static_cast<u64>(b % a));
             } break;
 
             /// Remainder of two integers (unsigned).
@@ -149,7 +165,7 @@ void interp::interpreter::run() {
                 ip++;
                 auto a = pop();
                 auto b = pop();
-                push(a % b);
+                push(b % a);
             } break;
 
             /// Shift left.
@@ -157,7 +173,7 @@ void interp::interpreter::run() {
                 ip++;
                 auto a = pop();
                 auto b = pop();
-                push(a << b);
+                push(b << a);
             } break;
 
             /// Logical shift right.
@@ -165,15 +181,15 @@ void interp::interpreter::run() {
                 ip++;
                 auto a = pop();
                 auto b = pop();
-                push(a >> b);
+                push(b >> a);
             } break;
 
             /// Arithmetic shift right.
             case opcode::sar: {
                 ip++;
-                i64 a = static_cast<i64>(pop());
-                auto b = pop();
-                push(static_cast<u64>(a >> b));
+                auto a = pop();
+                i64 b = static_cast<i64>(pop());
+                push(static_cast<u64>(static_cast<i64>(b) >> a));
             } break;
 
             /// Call a function.
@@ -197,6 +213,30 @@ void interp::interpreter::run() {
                 /// Should never happen.
                 else { die("Invalid function type."); }
             } break;
+
+            /// Jump to an address.
+            case opcode::jmp: {
+                ip++;
+                auto target = bytecode[ip];
+                if (target >= bytecode.size()) [[unlikely]] { die("Jump target out of bounds."); }
+                ip = target;
+            } break;
+
+            /// Jump to an address if the top of the stack is not zero.
+            case opcode::jnz: {
+                ip++;
+                auto target = bytecode[ip];
+                if (target >= bytecode.size()) [[unlikely]] { die("Jump target out of bounds."); }
+                if (pop()) ip = target;
+                else ip++;
+            } break;
+
+            /// Duplicate the top of the stack.
+            case opcode::dup: {
+                ip++;
+                push(data_stack.back());
+            } break;
+
             default: die("Invalid opcode.");
         }
     }
