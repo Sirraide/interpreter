@@ -123,7 +123,7 @@ struct interpreter : ::interp_handle_t {
     std::vector<frame> frame_stack;
 
     /// Functions in the bytecode. NEVER reorder or remove elements from these.
-    std::vector<std::variant<addr, native_function>> functions;
+    std::vector<std::variant<std::monostate, addr, native_function>> functions;
     std::unordered_map<std::string, usz> functions_map;
 
     /// How many stack frames deep we are.

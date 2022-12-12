@@ -4,9 +4,21 @@
 ///  Miscellaneous.
 /// ===========================================================================
 void interp::interpreter::defun(const std::string& name, interp::native_function func) {
-    if (functions_map.contains(name)) die("Function '{}' is already defined.", name);
-    functions_map[name] = functions.size();
-    functions.emplace_back(std::move(func));
+    /// Function is already declared.
+    if (auto it = functions_map.find(name); it != functions_map.end()) {
+        /// Duplicate function definition.
+        if (not std::holds_alternative<std::monostate>(functions.at(it->second)))
+            throw error("Function '{}' is already defined.", name);
+
+        /// Resolve the forward declaration.
+        functions[it->second] = func;
+    }
+
+    /// Add the function.
+    else {
+        functions_map[name] = functions.size();
+        functions.emplace_back(std::move(func));
+    }
 }
 
 /// ===========================================================================
@@ -49,14 +61,34 @@ void interp::interpreter::create_push_int(i64 value) {
 
 void interp::interpreter::create_call(const std::string& name) {
     /// Make sure the function exists.
+    /// TODO: Handle parameters... somehow.
+    /// TODO: Allow loading a shared library and calling a function from it. (e.g. puts).
+    /// TODO: Add a crude wrapper to automatically wrap libc etc. functions.
+    ///       (e.g. call printf w/ 2 u64’s).
+    /// TODO: Alternatively, write a tool that uses libtooling to generate wrappers.
     auto it = functions_map.find(name);
-    if (it == functions_map.end()) throw error("Cannot create call to unknown function \"{}\"", name);
 
-    /// Should never happen.
-    if (it->second >= max_call_index) throw error("Cannot create call to function \"{}\" because the call index is too large.", name);
+    /// Function not found. Add an empty record.
+    if (it == functions_map.end()) {
+        functions_map[name] = functions.size();
+        functions.emplace_back(std::monostate{});
 
-    /// Push the opcode and call index.
-    bytecode.push_back(static_cast<opcode_t>(opcode::call) | (u64(it->second) << 8u));
+        /// Should never happen.
+        if (functions.size() > max_call_index)
+            throw error("Cannot create call to function \"{}\" because the call index is too large.", name);
+
+        /// Push the opcode and call index.
+        bytecode.push_back(static_cast<opcode_t>(opcode::call) | (u64(functions.size() - 1) << 8u));
+    }
+
+    /// Function found.
+    else {
+        /// Should never happen.
+        if (it->second >= max_call_index) throw error("Cannot create call to function \"{}\" because the call index is too large.", name);
+
+        /// Push the opcode and call index.
+        bytecode.push_back(static_cast<opcode_t>(opcode::call) | (u64(it->second) << 8u));
+    }
 }
 
 void interp::interpreter::create_branch(addr target) {
@@ -85,7 +117,7 @@ void interp::interpreter::run() {
     ip = ip_start_addr;
 
     for (;;) {
-        if (ip >= bytecode.size()) [[unlikely]] { die("Instruction pointer out of bounds."); }
+        if (ip >= bytecode.size()) [[unlikely]] { throw error("Instruction pointer out of bounds."); }
         switch (auto instruction = bytecode[ip]; static_cast<opcode>(instruction & 0xff)) {
             /// Do nothing.
             case opcode::nop: ip++; break;
@@ -202,6 +234,9 @@ void interp::interpreter::run() {
                 usz index = instruction >> 8u;
                 ip++;
 
+                /// Make sure the index is valid.
+                if (index >= functions.size()) [[unlikely]] { throw error("Call index out of bounds"); }
+
                 /// If it’s a native function, call it.
                 auto& func = functions.at(index);
                 if (std::holds_alternative<native_function>(func)) {
@@ -215,15 +250,23 @@ void interp::interpreter::run() {
                     stack_frame_count++;
                 }
 
-                /// Should never happen.
-                else { die("Invalid function type."); }
+                /// Unknown function.
+                else {
+                    /// Try to get the function name.
+                    auto it = std::find_if(functions_map.begin(), functions_map.end(), [&](auto& f) { return f.second == index; });
+                    if (it != functions_map.end()) {
+                        throw error("Unknown function \"{}\" called.", it->first);
+                    } else {
+                        throw error("Unknown function with index {} called.", index);
+                    }
+                }
             } break;
 
             /// Jump to an address.
             case opcode::jmp: {
                 ip++;
                 auto target = bytecode[ip];
-                if (target >= bytecode.size()) [[unlikely]] { die("Jump target out of bounds."); }
+                if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds."); }
                 ip = target;
             } break;
 
@@ -231,7 +274,7 @@ void interp::interpreter::run() {
             case opcode::jnz: {
                 ip++;
                 auto target = bytecode[ip];
-                if (target >= bytecode.size()) [[unlikely]] { die("Jump target out of bounds."); }
+                if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds."); }
                 if (pop()) ip = target;
                 else ip++;
             } break;
@@ -242,7 +285,7 @@ void interp::interpreter::run() {
                 push(data_stack.back());
             } break;
 
-            default: die("Invalid opcode.");
+            default: throw error("Invalid opcode.");
         }
     }
 }

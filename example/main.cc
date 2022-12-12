@@ -2,8 +2,6 @@
 
 int main() {
     interp::interpreter interp;
-    interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.pop()); });
-
     interp.create_push_int(9);
     auto start = interp.current_addr();
     interp.create_dup();
@@ -14,5 +12,6 @@ int main() {
     interp.create_branch_ifnz(start);
 
     interp.create_return();
+    interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.pop()); });
     interp.run();
 }
