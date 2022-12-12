@@ -1,6 +1,20 @@
 #include <interpreter/interp.hh>
+#include <clopts.hh>
 
-int main() {
+namespace detail {
+using namespace command_line_options;
+using options = clopts< // clang-format off
+    flag<"-d", "Print disassembly and exit">,
+    help
+>; // clang-format on
+}
+
+using detail::options;
+
+
+int main(int argc, char** argv) {
+    options::parse(argc, argv);
+
     interp::interpreter interp;
     interp.create_push_int(9);
     auto start = interp.current_addr();
@@ -13,6 +27,11 @@ int main() {
 
     interp.create_return();
     interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.pop()); });
+
+    if (options::get<"-d">()) {
+        fmt::print("{}", interp.disassemble());
+        std::exit(0);
+    }
+
     interp.run();
-    fmt::print("\n{}", interp.disassemble());
 }
