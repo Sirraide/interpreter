@@ -79,6 +79,8 @@ auto interp::interpreter::current_addr() const -> addr { return bytecode.size();
 ///  Execute bytecode.
 /// ===========================================================================
 void interp::interpreter::run() {
+    ip = ip_start_addr;
+
     for (;;) {
         if (ip >= bytecode.size()) [[unlikely]] { die("Instruction pointer out of bounds."); }
         switch (auto instruction = bytecode[ip]; static_cast<opcode>(instruction & 0xff)) {
@@ -93,8 +95,8 @@ void interp::interpreter::run() {
                 stack_frame_count--;
 
                 /// Pop the return address.
-                ip = addr_stack.back();
-                addr_stack.pop_back();
+                ip = frame_stack.back().return_address;
+                frame_stack.pop_back();
             } break;
 
             /// Push an integer.
@@ -205,7 +207,7 @@ void interp::interpreter::run() {
 
                 /// Otherwise, push the return address and jump to the function.
                 else if (std::holds_alternative<addr>(func)) {
-                    addr_stack.push_back(ip);
+                    frame_stack.push_back({ip});
                     ip = std::get<addr>(func);
                     stack_frame_count++;
                 }

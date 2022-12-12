@@ -22,7 +22,7 @@ namespace interp {
 struct interpreter;
 
 /// Typedefs.
-using opcode_t = u32;
+using opcode_t = u64;
 using addr = usz;
 using native_function = std::function<void(interpreter&)>;
 using elem = u64;
@@ -31,7 +31,7 @@ using elem = u64;
 enum struct opcode : opcode_t {
     invalid = 0,
 
-    /// Does nothing. Used for alignment.
+    /// Does nothing.
     nop,
 
     /// Return from a function or stop the interpreter.
@@ -102,6 +102,13 @@ struct error : std::runtime_error {
 /// This holds the interpreter state.
 /// TODO: Should be class. struct for now for testing purposes.
 struct interpreter {
+    /// Stack frame.
+    struct frame {
+        addr return_address{};
+
+        /// TODO: locals.
+    };
+
     /// The code that we’re executing.
     std::vector<elem> bytecode;
 
@@ -110,7 +117,7 @@ struct interpreter {
 
     /// The stack.
     std::vector<elem> data_stack;
-    std::vector<addr> addr_stack;
+    std::vector<frame> frame_stack;
 
     /// Functions in the bytecode. NEVER reorder or remove elements from these.
     std::vector<std::variant<addr, native_function>> functions;
@@ -121,6 +128,7 @@ struct interpreter {
 
     /// Constants.
     constexpr static usz max_call_index = 0x00ff'ffff'ffff'ffffzu;
+    constexpr static usz ip_start_addr = 1;
 
     /// ===========================================================================
     ///  Stack manipulation.
@@ -136,7 +144,10 @@ public:
     usz max_stack_size = 1024 * 1024;
 
     /// Construct an interpreter.
-    interpreter() = default;
+    interpreter() {
+        /// Push an invalid instruction to make sure jumps to 0 throw.
+        bytecode.push_back(static_cast<opcode_t>(opcode::invalid));
+    }
 
     /// Copying/moving this is a bad idea.
     interpreter(const interpreter&) = delete;
