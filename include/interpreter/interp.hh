@@ -44,6 +44,28 @@ enum struct opcode : opcode_t {
     /// Add the top two values on the stack as integers.
     addi,
 
+    /// Subtract the second value on the stack from the top value (integers).
+    subi,
+
+    /// Multiply the top two values on the stack (integers).
+    muli,
+    mulu,
+
+    /// Divide the top of the stack by the second value (integers).
+    divi,
+    divu,
+
+    /// Compute the remainder of the top of the stack divided by the second value (integers).
+    remi,
+    remu,
+
+    /// Shift the top of the stack left by the second value.
+    shl,
+
+    /// Shift the top of the stack right by the second value.
+    sar,
+    shr,
+
     /// Function call.
     /// Operands: index (7 remaining bytes of operands).
     /// The index is the index of the function in the function table.
@@ -126,8 +148,58 @@ public:
     /// Create an instruction that pushes an integer onto the stack.
     void create_push_int(i64 value);
 
-    /// Create an instruction that adds the top two values on the stack and pushes the result.
+    /// Create an instruction that adds the top two values on the stack
+    /// and pushes the result.
     void create_addi();
+
+    /// Create an instruction that subtracts the second value on the stack
+    /// from the top value and pushes the result.
+    void create_subi();
+
+    /// Create an instruction that multiplies the top two values on the stack
+    /// and pushes the result.
+    ///
+    /// This is signed multiplication, for unsigned multiplication use `create_mulu`.
+    void create_muli();
+
+    /// Create an instruction that multiplies the top two values on the stack
+    /// and pushes the result.
+    ///
+    /// This is unsigned multiplication, for signed multiplication use `create_muli`.
+    void create_mulu();
+
+    /// Create an instruction that divides the top of the stack by the second value
+    /// and pushes the result.
+    ///
+    /// This is signed division, for unsigned division use `create_divu`.
+    void create_divi();
+
+    /// Create an instruction that divides the top of the stack by the second value
+    /// and pushes the result.
+    ///
+    /// This is unsigned division, for signed division use `create_divi`.
+    void create_divu();
+
+    /// Create an instruction that computes the remainder of the top of the stack
+    /// divided by the second value and pushes the result.
+    ///
+    /// This operation is signed, for unsigned remainder use `create_remu`.
+    void create_remi();
+
+    /// Create an instruction that computes the remainder of the top of the stack
+    /// divided by the second value and pushes the result.
+    ///
+    /// This operation is unsigned, for signed remainder use `create_remi`.
+    void create_remu();
+
+    /// Create an instruction that shifts the top of the stack left by the second value.
+    void create_shift_left();
+
+    /// Create an instruction that shifts the top of the stack right by the second value.
+    void create_shift_right_arithmetic();
+
+    /// Create an instruction that shifts the top of the stack right by the second value.
+    void create_shift_right_logical();
 
     /// Create a call to a function.
     void create_call(const std::string& name);

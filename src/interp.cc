@@ -31,6 +31,16 @@ auto interp::interpreter::pop() -> elem {
 /// ===========================================================================
 void interp::interpreter::create_return() { bytecode.push_back(static_cast<opcode_t>(opcode::ret)); }
 void interp::interpreter::create_addi() { bytecode.push_back(static_cast<opcode_t>(opcode::addi)); }
+void interp::interpreter::create_subi() { bytecode.push_back(static_cast<opcode_t>(opcode::subi)); }
+void interp::interpreter::create_muli() { bytecode.push_back(static_cast<opcode_t>(opcode::muli)); }
+void interp::interpreter::create_mulu() { bytecode.push_back(static_cast<opcode_t>(opcode::mulu)); }
+void interp::interpreter::create_divi() { bytecode.push_back(static_cast<opcode_t>(opcode::divi)); }
+void interp::interpreter::create_divu() { bytecode.push_back(static_cast<opcode_t>(opcode::divu)); }
+void interp::interpreter::create_remi() { bytecode.push_back(static_cast<opcode_t>(opcode::remi)); }
+void interp::interpreter::create_remu() { bytecode.push_back(static_cast<opcode_t>(opcode::remu)); }
+void interp::interpreter::create_shift_left() { bytecode.push_back(static_cast<opcode_t>(opcode::shl)); }
+void interp::interpreter::create_shift_right_logical() { bytecode.push_back(static_cast<opcode_t>(opcode::shr)); }
+void interp::interpreter::create_shift_right_arithmetic() { bytecode.push_back(static_cast<opcode_t>(opcode::sar)); }
 
 void interp::interpreter::create_push_int(i64 value) {
     bytecode.push_back(static_cast<opcode_t>(opcode::push_int));
@@ -84,6 +94,86 @@ void interp::interpreter::run() {
                 auto a = pop();
                 auto b = pop();
                 push(a + b);
+            } break;
+
+            /// Subtract two integers.
+            case opcode::subi: {
+                ip++;
+                auto a = pop();
+                auto b = pop();
+                push(a - b);
+            } break;
+
+            /// Multiply two integers (signed).
+            case opcode::muli: {
+                ip++;
+                i64 a = static_cast<i64>(pop());
+                i64 b = static_cast<i64>(pop());
+                push(static_cast<u64>(a * b));
+            } break;
+
+            /// Multiply two integers (unsigned).
+            case opcode::mulu: {
+                ip++;
+                auto a = pop();
+                auto b = pop();
+                push(a * b);
+            } break;
+
+            /// Divide two integers (signed).
+            case opcode::divi: {
+                ip++;
+                i64 a = static_cast<i64>(pop());
+                i64 b = static_cast<i64>(pop());
+                push(static_cast<u64>(a / b));
+            } break;
+
+            /// Divide two integers (unsigned).
+            case opcode::divu: {
+                ip++;
+                auto a = pop();
+                auto b = pop();
+                push(a / b);
+            } break;
+
+            /// Remainder of two integers (signed).
+            case opcode::remi: {
+                ip++;
+                i64 a = static_cast<i64>(pop());
+                i64 b = static_cast<i64>(pop());
+                push(static_cast<u64>(a % b));
+            } break;
+
+            /// Remainder of two integers (unsigned).
+            case opcode::remu: {
+                ip++;
+                auto a = pop();
+                auto b = pop();
+                push(a % b);
+            } break;
+
+            /// Shift left.
+            case opcode::shl: {
+                ip++;
+                auto a = pop();
+                auto b = pop();
+                push(a << b);
+            } break;
+
+            /// Logical shift right.
+            case opcode::shr: {
+                ip++;
+                auto a = pop();
+                auto b = pop();
+                push(a >> b);
+            } break;
+
+            /// Arithmetic shift right.
+            case opcode::sar: {
+                ip++;
+                i64 a = static_cast<i64>(pop());
+                auto b = pop();
+                push(static_cast<u64>(a >> b));
             } break;
 
             /// Call a function.
