@@ -16,6 +16,9 @@
 /// Don’t want to deal w/ this rn.
 static_assert(sizeof(void*) == 8 && sizeof(usz) == 8, "Only 64-bit systems are supported.");
 
+/// This is so we can downcast more easily.
+struct interp_handle_t {};
+
 /// The interpreter namespace.
 namespace interp {
 /// Forward decls.
@@ -101,7 +104,7 @@ struct error : std::runtime_error {
 /// ===========================================================================
 /// This holds the interpreter state.
 /// TODO: Should be class. struct for now for testing purposes.
-struct interpreter {
+struct interpreter : ::interp_handle_t {
     /// Stack frame.
     struct frame {
         addr return_address{};
@@ -126,10 +129,14 @@ struct interpreter {
     /// How many stack frames deep we are.
     usz stack_frame_count{};
 
+    /// Last error. Used by the C API.
+    std::string last_error;
+
     /// Constants.
     constexpr static usz max_call_index = 0x00ff'ffff'ffff'ffffzu;
     constexpr static usz ip_start_addr = 1;
 
+public:
     /// ===========================================================================
     ///  Stack manipulation.
     /// ===========================================================================
@@ -139,7 +146,6 @@ struct interpreter {
     /// Pop a value from the stack.
     elem pop();
 
-public:
     /// Maximum stack size.
     usz max_stack_size = 1024 * 1024;
 

@@ -79,6 +79,9 @@ auto interp::interpreter::current_addr() const -> addr { return bytecode.size();
 ///  Execute bytecode.
 /// ===========================================================================
 void interp::interpreter::run() {
+    stack_frame_count = 0;
+    data_stack.clear();
+    frame_stack.clear();
     ip = ip_start_addr;
 
     for (;;) {
