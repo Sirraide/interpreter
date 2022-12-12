@@ -1,4 +1,12 @@
+#include <algorithm>
 #include <interpreter/interp.hh>
+#include <ranges>
+
+#define L(x) \
+    x:
+
+namespace ranges = std::ranges;
+namespace views = std::views;
 
 /// ===========================================================================
 ///  Miscellaneous.
@@ -288,4 +296,84 @@ void interp::interpreter::run() {
             default: throw error("Invalid opcode.");
         }
     }
+}
+
+/// ===========================================================================
+///  Disassembler.
+/// ===========================================================================
+std::string interp::interpreter::disassemble() const {
+    std::string result;
+
+    /// Determine the number of nonzero bytes of the greatest number in the bytecode.
+    auto padd_to = ranges::max(bytecode | views::transform(std::bind_front(number_width, 16))) / 2;
+    static constexpr auto padding = "   ";
+
+    /// Print 8 bytes as hex, two digits at a time.
+    const auto print_hex = [&result, padd_to](usz number) {
+        for (usz i = 0; i < 8; i++) {
+            if (not number) {
+                /// Still print the number if it’s 0.
+                if (i == 0) {
+                    result += fmt::format(" {:02x}", number & 0xff);
+                    i++;
+                }
+
+                /// Align to padding.
+                for (usz j = i; j < padd_to; j++) result += "   ";
+                break;
+            } else {
+                result += fmt::format(" {:02x}", number & 0xff);
+                number >>= 8;
+            }
+        }
+    };
+
+    /// Iterate over the bytecode and disassemble each instruction.
+    for (usz i = 0; i < bytecode.size(); i++) {
+        /// Print address.
+        result += fmt::format("[{:08x}]:", i);
+
+        /// Print the bytes.
+        auto instruction = bytecode[i];
+        print_hex(instruction);
+
+        /// Print a few spaces for visual separation.
+        result += padding;
+
+        /// Print the instruction mnemonic.
+        switch (static_cast<opcode>(instruction & 0xff)) {
+            default: result += "???\n"; break;
+            case opcode::nop: result += "nop\n"; break;
+            case opcode::ret: result += "ret\n"; break;
+            case opcode::push_int: result += fmt::format("pushi {}\n", bytecode[i + 1]); goto print_next;
+            case opcode::addi: result += "addi\n"; break;
+            case opcode::subi: result += "subi\n"; break;
+            case opcode::muli: result += "muli\n"; break;
+            case opcode::mulu: result += "mulu\n"; break;
+            case opcode::divi: result += "divi\n"; break;
+            case opcode::divu: result += "divu\n"; break;
+            case opcode::remi: result += "remi\n"; break;
+            case opcode::remu: result += "remu\n"; break;
+            case opcode::shl: result += "shl\n"; break;
+            case opcode::sar: result += "sar\n"; break;
+            case opcode::shr: result += "shr\n"; break;
+            case opcode::call: result += fmt::format("call {}\n", bytecode[i + 1]); goto print_next;
+            case opcode::jmp: result += fmt::format("jmp {}\n", bytecode[i + 1]); goto print_next;
+            case opcode::jnz: result += fmt::format("jnz {}\n", bytecode[i + 1]); goto print_next;
+            case opcode::dup: result += "dup\n"; break;
+        }
+
+        /// Next instruction.
+        continue;
+
+        /// Print the next 8 bytes as hex.
+        L(print_next) {
+            i++;
+            result += fmt::format("[{:08x}]:", i);
+            print_hex(bytecode[i]);
+            result += "\n";
+        }
+    }
+
+    return result;
 }

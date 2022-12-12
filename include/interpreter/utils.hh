@@ -79,6 +79,11 @@ void todo(fmt::format_string<arguments...> fmt = "", arguments&& ...args) {
 template <typename a, typename b>
 constexpr inline bool is = std::is_same_v<std::remove_cvref_t<a>, std::remove_cvref_t<b>>;
 
+/// Determine the width of a number.
+constexpr inline usz number_width(usz base, usz value) {
+    return not value ? 1 : usz(std::log(value) / std::log(base)) + 1;
+}
+
 }
 
 #endif // INTERPRETER_UTILS_HH

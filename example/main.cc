@@ -14,4 +14,5 @@ int main() {
     interp.create_return();
     interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.pop()); });
     interp.run();
+    fmt::print("\n{}", interp.disassemble());
 }

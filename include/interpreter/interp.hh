@@ -164,6 +164,9 @@ public:
     /// Define a binding to a native function.
     void defun(const std::string& name, native_function func);
 
+    /// Disassemble the bytecode.
+    std::string disassemble() const;
+
     /// Run the interpreter().
     void run();
 
