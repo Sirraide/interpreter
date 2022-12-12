@@ -63,8 +63,12 @@ void interp::interpreter::create_shift_right_logical() { bytecode.push_back(stat
 void interp::interpreter::create_shift_right_arithmetic() { bytecode.push_back(static_cast<opcode_t>(opcode::sar)); }
 
 void interp::interpreter::create_push_int(i64 value) {
-    bytecode.push_back(static_cast<opcode_t>(opcode::push_int));
-    bytecode.push_back(static_cast<elem>(value));
+    if (static_cast<u64>(value) < bit_mask_56) {
+        bytecode.push_back(static_cast<opcode_t>(opcode::push_int) | (static_cast<opcode_t>(value) << 8));
+    } else {
+        bytecode.push_back(static_cast<opcode_t>(opcode::push_int) | (bit_mask_56 << 8));
+        bytecode.push_back(static_cast<elem>(value));
+    }
 }
 
 void interp::interpreter::create_call(const std::string& name) {
@@ -100,13 +104,21 @@ void interp::interpreter::create_call(const std::string& name) {
 }
 
 void interp::interpreter::create_branch(addr target) {
-    bytecode.push_back(static_cast<opcode_t>(opcode::jmp));
-    bytecode.push_back(target);
+    if (target < bit_mask_56) {
+        bytecode.push_back(static_cast<opcode_t>(opcode::jmp) | (static_cast<opcode_t>(target) << 8));
+    } else {
+        bytecode.push_back(static_cast<opcode_t>(opcode::jmp) | (bit_mask_56 << 8));
+        bytecode.push_back(target);
+    }
 }
 
 void interp::interpreter::create_branch_ifnz(addr target) {
-    bytecode.push_back(static_cast<opcode_t>(opcode::jnz));
-    bytecode.push_back(target);
+    if (target < bit_mask_56) {
+        bytecode.push_back(static_cast<opcode_t>(opcode::jnz) | (static_cast<opcode_t>(target) << 8));
+    } else {
+        bytecode.push_back(static_cast<opcode_t>(opcode::jnz) | (bit_mask_56 << 8));
+        bytecode.push_back(target);
+    }
 }
 
 void interp::interpreter::create_dup() {
@@ -123,6 +135,15 @@ void interp::interpreter::run() {
     data_stack.clear();
     frame_stack.clear();
     ip = ip_start_addr;
+
+    /// Get the masked value encoded in this instruction, or the next value.
+    const auto masked_or_next = [&](opcode_t instruction) -> elem {
+        if ((instruction >> 8) == bit_mask_56) {
+            return bytecode[ip++];
+        } else {
+            return instruction >> 8;
+        }
+    };
 
     for (;;) {
         if (ip >= bytecode.size()) [[unlikely]] { throw error("Instruction pointer out of bounds."); }
@@ -145,8 +166,8 @@ void interp::interpreter::run() {
             /// Push an integer.
             case opcode::push_int: {
                 ip++;
-                push(bytecode[ip]);
-                ip++;
+                auto value = masked_or_next(instruction);
+                push(value);
             } break;
 
             /// Add two integers.
@@ -273,7 +294,7 @@ void interp::interpreter::run() {
             /// Jump to an address.
             case opcode::jmp: {
                 ip++;
-                auto target = bytecode[ip];
+                auto target = masked_or_next(instruction);
                 if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds."); }
                 ip = target;
             } break;
@@ -281,10 +302,9 @@ void interp::interpreter::run() {
             /// Jump to an address if the top of the stack is not zero.
             case opcode::jnz: {
                 ip++;
-                auto target = bytecode[ip];
+                auto target = masked_or_next(instruction);
                 if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds."); }
                 if (pop()) ip = target;
-                else ip++;
             } break;
 
             /// Duplicate the top of the stack.
@@ -302,11 +322,14 @@ void interp::interpreter::run() {
 ///  Disassembler.
 /// ===========================================================================
 std::string interp::interpreter::disassemble() const {
+    static constexpr auto padding = "   ";
     std::string result;
 
     /// Determine the number of nonzero bytes of the greatest number in the bytecode.
-    auto padd_to = ranges::max(bytecode | views::transform(std::bind_front(number_width, 16))) / 2;
-    static constexpr auto padding = "   ";
+    auto padd_to = ranges::max(bytecode | views::transform(std::bind_front(number_width, 16)));
+
+    /// Round up to the nearest multiple of 2, and divide by 2.
+    padd_to = (padd_to + (padd_to & 1)) / 2;
 
     /// Print 8 bytes as hex, two digits at a time.
     const auto print_hex = [&result, padd_to](usz number) {

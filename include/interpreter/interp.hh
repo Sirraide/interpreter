@@ -41,7 +41,7 @@ enum struct opcode : opcode_t {
     ret,
 
     /// Push an integer onto the stack.
-    /// Operands: value (8 bytes)
+    /// Operands: value (7 last bytes of the opcode, or 8 extra bytes)
     push_int,
 
     /// Add the top two values on the stack as integers.
@@ -75,11 +75,11 @@ enum struct opcode : opcode_t {
     call,
 
     /// Jump to an address.
-    /// Operands: address (8 bytes).
+    /// Operands: address (7 last bytes of the opcode, or 8 extra bytes)
     jmp,
 
     /// Jump to an address if the top of the stack is nonzero.
-    /// Operands: address (8 bytes).
+    /// Operands: address (7 last bytes of the opcode, or 8 extra bytes)
     jnz,
 
     /// Duplicate the top of the stack.
@@ -133,7 +133,8 @@ struct interpreter : ::interp_handle_t {
     std::string last_error;
 
     /// Constants.
-    constexpr static usz max_call_index = 0x00ff'ffff'ffff'ffffzu;
+    constexpr static usz bit_mask_56 = 0x00ff'ffff'ffff'ffffzu;
+    constexpr static usz max_call_index = bit_mask_56;
     constexpr static usz ip_start_addr = 1;
 
 public:
