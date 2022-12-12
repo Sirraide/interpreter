@@ -40,6 +40,9 @@ enum struct opcode : opcode_t {
     /// Return from a function or stop the interpreter.
     ret,
 
+    /// Return the top of the stack from a function or from the program.
+    retv,
+
     /// Push an integer onto the stack.
     /// Operands: value (7 last bytes of the opcode, or 8 extra bytes)
     push_int,
@@ -169,13 +172,19 @@ public:
     std::string disassemble() const;
 
     /// Run the interpreter().
-    void run();
+    /// \return The return value of the program.
+    i64 run();
 
     /// ===========================================================================
     ///  Operations.
     /// ===========================================================================
-    /// Create a return instruction.
-    void create_return();
+    /// Create a return instruction that returns from the current function
+    /// without a return value.
+    void create_return_void();
+
+    /// Create a return instruction that returns from the current function;
+    /// the return value is the top of the stack.
+    void create_return_value();
 
     /// Create an instruction that pushes an integer onto the stack.
     void create_push_int(i64 value);

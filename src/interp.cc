@@ -49,7 +49,8 @@ auto interp::interpreter::pop() -> elem {
 /// ===========================================================================
 ///  Operations.
 /// ===========================================================================
-void interp::interpreter::create_return() { bytecode.push_back(static_cast<opcode_t>(opcode::ret)); }
+void interp::interpreter::create_return_void() { bytecode.push_back(static_cast<opcode_t>(opcode::ret)); }
+void interp::interpreter::create_return_value() { bytecode.push_back(static_cast<opcode_t>(opcode::retv)); }
 void interp::interpreter::create_addi() { bytecode.push_back(static_cast<opcode_t>(opcode::addi)); }
 void interp::interpreter::create_subi() { bytecode.push_back(static_cast<opcode_t>(opcode::subi)); }
 void interp::interpreter::create_muli() { bytecode.push_back(static_cast<opcode_t>(opcode::muli)); }
@@ -130,7 +131,7 @@ auto interp::interpreter::current_addr() const -> addr { return bytecode.size();
 /// ===========================================================================
 ///  Execute bytecode.
 /// ===========================================================================
-void interp::interpreter::run() {
+i64 interp::interpreter::run() {
     stack_frame_count = 0;
     data_stack.clear();
     frame_stack.clear();
@@ -148,12 +149,14 @@ void interp::interpreter::run() {
     for (;;) {
         if (ip >= bytecode.size()) [[unlikely]] { throw error("Instruction pointer out of bounds."); }
         switch (auto instruction = bytecode[ip]; static_cast<opcode>(instruction & 0xff)) {
+            static_assert(opcode_t(opcode::max_opcode) == 20);
+
             /// Do nothing.
             case opcode::nop: ip++; break;
 
             /// Return from a function.
             case opcode::ret: {
-                if (stack_frame_count == 0) return;
+                if (stack_frame_count == 0) return 0;
 
                 /// Pop the stack frame.
                 stack_frame_count--;
@@ -161,6 +164,25 @@ void interp::interpreter::run() {
                 /// Pop the return address.
                 ip = frame_stack.back().return_address;
                 frame_stack.pop_back();
+            } break;
+
+            /// Return from a function and push a value.
+            case opcode::retv: {
+                /// Return value.
+                auto retval = pop();
+
+                /// Top frame; return from the program.
+                if (stack_frame_count == 0) return static_cast<i64>(retval);
+
+                /// Pop the stack frame.
+                stack_frame_count--;
+
+                /// Pop the return address.
+                ip = frame_stack.back().return_address;
+                frame_stack.pop_back();
+
+                /// Push the return value.
+                push(retval);
             } break;
 
             /// Push an integer.
@@ -333,10 +355,16 @@ std::string interp::interpreter::disassemble() const {
 
     /// Print 8 bytes as hex, two digits at a time.
     const auto print_hex = [&result, padd_to](usz number) {
+        auto opcode = number & 0xff;
         for (usz i = 0; i < 8; i++) {
             if (not number) {
-                /// Still print the number if it’s 0.
-                if (i == 0) {
+                /// Still print the number if it’s 0 or if the instruction takes an operand.
+                if (i == 0 or (i == 1 and ( // clang-format off
+                    opcode == u8(opcode::push_int) or
+                    opcode == u8(opcode::call) or
+                    opcode == u8(opcode::jmp) or
+                    opcode == u8(opcode::jnz)
+                ))) { // clang-format on
                     result += fmt::format(" {:02x}", number & 0xff);
                     i++;
                 }
@@ -351,8 +379,21 @@ std::string interp::interpreter::disassemble() const {
         }
     };
 
+    /// Extract the opcode from an instruction.
+    usz i = 0;
+    const auto print_masked_or_next = [&](opcode_t instruction) {
+        const auto masked = (instruction >> 8) == bit_mask_56;
+        result += fmt::format("{}\n", masked ? bytecode[i + 1] : instruction >> 8);
+        if (masked) {
+            i++;
+            result += fmt::format("[{:08x}]:", i);
+            print_hex(bytecode[i]);
+            result += "\n";
+        }
+    };
+
     /// Iterate over the bytecode and disassemble each instruction.
-    for (usz i = 0; i < bytecode.size(); i++) {
+    for (; i < bytecode.size(); i++) {
         /// Print address.
         result += fmt::format("[{:08x}]:", i);
 
@@ -365,16 +406,22 @@ std::string interp::interpreter::disassemble() const {
 
         /// Print the instruction mnemonic.
         switch (static_cast<opcode>(instruction & 0xff)) {
-            default: result += "???\n"; break;
+            static_assert(opcode_t(opcode::max_opcode) == 20);
+            default:
+                if (i == 0) result += ".sentinel\n";
+                else result += "???\n";
+                break;
             case opcode::nop: result += "nop\n"; break;
             case opcode::ret: result += "ret\n"; break;
+            case opcode::retv: result += "retv\n"; break;
             case opcode::push_int:
                 if (i == bytecode.size() - 1) {
                     result += "pushi ???\n";
                     break;
                 }
-                result += fmt::format("pushi {}\n", bytecode[i + 1]);
-                goto print_next;
+                result += "pushi ";
+                print_masked_or_next(instruction);
+                break;
             case opcode::addi: result += "addi\n"; break;
             case opcode::subi: result += "subi\n"; break;
             case opcode::muli: result += "muli\n"; break;
@@ -391,35 +438,30 @@ std::string interp::interpreter::disassemble() const {
                     result += "call ???\n";
                     break;
                 }
-                result += fmt::format("call {}\n", bytecode[i + 1]);
-                goto print_next;
+                result += "call ";
+                print_masked_or_next(instruction);
+                break;
             case opcode::jmp:
                 if (i == bytecode.size() - 1) {
                     result += "jmp ???\n";
                     break;
                 }
-                result += fmt::format("jmp {}\n", bytecode[i + 1]);
-                goto print_next;
+                result += "jmp ";
+                print_masked_or_next(instruction);
+                break;
             case opcode::jnz:
                 if (i == bytecode.size() - 1) {
                     result += "jnz ???\n";
                     break;
                 }
-                result += fmt::format("jnz {}\n", bytecode[i + 1]);
-                goto print_next;
+                result += "jnz ";
+                print_masked_or_next(instruction);
+                break;
             case opcode::dup: result += "dup\n"; break;
         }
 
         /// Next instruction.
         continue;
-
-        /// Print the next 8 bytes as hex.
-        L(print_next) {
-            i++;
-            result += fmt::format("[{:08x}]:", i);
-            print_hex(bytecode[i]);
-            result += "\n";
-        }
     }
 
     return result;

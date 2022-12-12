@@ -67,11 +67,12 @@ interp_code interp_defun(
     }
 }
 
-interp_code interp_run(interp_handle handle) {
+interp_code interp_run(interp_handle handle, interp_int *retval) {
     auto i = static_cast<interp::interpreter*>(handle);
     if (i == nullptr) return INTERP_ERR;
     try {
-        i->run();
+        auto result = i->run();
+        if (retval) *retval = result;
         return INTERP_OK;
     } catch (const std::exception& e) {
         i->last_error = e.what();
@@ -94,8 +95,12 @@ char* interp_disassemble(interp_handle handle) {
 /// ===========================================================================
 ///  Operations.
 /// ===========================================================================
-void interp_create_return(interp_handle handle) {
-    static_cast<interp::interpreter*>(handle)->create_return();
+void interp_create_return_void(interp_handle handle) {
+    static_cast<interp::interpreter*>(handle)->create_return_void();
+}
+
+void interp_create_return_value(interp_handle handle) {
+    static_cast<interp::interpreter*>(handle)->create_return_value();
 }
 
 void interp_create_push_int(interp_handle handle, i64 value) {

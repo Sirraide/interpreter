@@ -75,8 +75,9 @@ interp_code interp_defun(
 /// Run the interpreter.
 ///
 /// \param handle The interpreter handle.
+/// \param retval The return value. May be NULL.
 /// \return INTERP_OK (0) on success; a nonzero value on failure.
-interp_code interp_run(interp_handle handle);
+interp_code interp_run(interp_handle handle, interp_int* retval);
 
 /// Disassemble the bytecode.
 ///
@@ -89,9 +90,13 @@ char* interp_disassemble(interp_handle handle);
 /// ===========================================================================
 ///  Operations.
 /// ===========================================================================
-/// Create a return instruction.
+/// Create a return instruction. This does not return a value.
 /// \param handle The interpreter handle.
-void interp_create_return(interp_handle handle);
+void interp_create_return_void(interp_handle handle);
+
+/// Create a return instruction. Returns the top value on the stack to the caller.
+/// \param handle The interpreter handle.
+void interp_create_return_value(interp_handle handle);
 
 /// Create an instruction that pushes an integer onto the stack.
 /// \param handle The interpreter handle.

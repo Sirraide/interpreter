@@ -14,8 +14,9 @@ using detail::options;
 
 int main(int argc, char** argv) {
     options::parse(argc, argv);
-
     interp::interpreter interp;
+
+    /// Loop.
     interp.create_push_int(9);
     auto start = interp.current_addr();
     interp.create_dup();
@@ -25,13 +26,19 @@ int main(int argc, char** argv) {
     interp.create_dup();
     interp.create_branch_ifnz(start);
 
-    interp.create_return();
+    /// Return 42.
+    interp.create_push_int(42);
+    interp.create_return_value();
+
+    /// Define a function.
     interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.pop()); });
 
+    /// Disassemble.
     if (options::get<"-d">()) {
         fmt::print("{}", interp.disassemble());
         std::exit(0);
     }
 
-    interp.run();
+    /// Run.
+    return int(interp.run());
 }
