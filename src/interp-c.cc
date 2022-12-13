@@ -3,6 +3,7 @@
 extern "C" {
 
 constexpr inline interp_code INTERP_ERR = 1;
+/*
 
 /// ===========================================================================
 ///  Interpreter creation and destruction.
@@ -202,6 +203,7 @@ interp_code interp_current_address(interp_handle handle, interp_address* out) {
         return INTERP_ERR;
     }
 }
+*/
 
 //
 }

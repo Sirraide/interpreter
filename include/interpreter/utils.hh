@@ -6,11 +6,19 @@
 #   error "This header is C++ only. Use <interpreter/utils.h> instead."
 #endif
 
+/// We only support little-endian for now.
+#include <bit>
+static_assert(std::endian::native == std::endian::little, "Only little-endian systems are supported.");
+
+
 #include <fmt/format.h>
 #include <interpreter/utils.h>
 
 #define defer auto CAT($$defer_instance_, __COUNTER__) = $$defer{}, [&]()
 #define tempset $$tempset_type CAT($$tempset_instance_, __COUNTER__) = $$tempset_stage_1{} %
+
+#define REP(n, var) for (usz var = 0; var < (n); var++)
+#define repeat(n) REP(n, CAT($$rep, __COUNTER__))
 
 template <typename callable>
 struct $$defer_type {

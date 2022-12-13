@@ -30,7 +30,7 @@ CompactNamespaces: false
 DerivePointerAlignment: false
 DisableFormat: false
 FixNamespaceComments: true
-ForEachMacros: []
+ForEachMacros: ["repeat"]
 IncludeBlocks: Regroup
 IndentCaseLabels: true
 IndentPPDirectives: AfterHash

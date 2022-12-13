@@ -11,27 +11,24 @@ using options = clopts< // clang-format off
 
 using detail::options;
 
-
 int main(int argc, char** argv) {
     options::parse(argc, argv);
     interp::interpreter interp;
+    using namespace interp::literals;
 
     /// Loop.
-    interp.create_push_int(9);
+    interp.create_move(2_r, 9_w);
     auto start = interp.current_addr();
-    interp.create_dup();
     interp.create_call("display");
-    interp.create_push_int(1);
-    interp.create_subi();
-    interp.create_dup();
-    interp.create_branch_ifnz(start);
+    interp.create_sub(2_r, 2_r, 1_w);
+    interp.create_branch_ifnz(2_r, start);
 
     /// Return 42.
-    interp.create_push_int(42);
-    interp.create_return_value();
+    interp.create_move(1_r, 42_w);
+    interp.create_return();
 
     /// Define a function.
-    interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.pop()); });
+    interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.registers[2]); });
 
     /// Disassemble.
     if (options::get<"-d">()) {

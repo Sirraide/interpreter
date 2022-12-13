@@ -29,55 +29,178 @@ void interp::interpreter::defun(const std::string& name, interp::native_function
     }
 }
 
-/// ===========================================================================
-///  Stack manipulation.
-/// ===========================================================================
 /// Push a value onto the stack.
-void interp::interpreter::push(elem value) {
-    if (data_stack.size() >= max_stack_size) die("Stack overflow");
-    data_stack.push_back(value);
+void interp::interpreter::push(word value) {
+    if (sp == max_stack_size) throw error("Stack overflow.");
+    stack[sp++] = value;
 }
 
 /// Pop a value from the stack.
-auto interp::interpreter::pop() -> elem {
-    if (data_stack.empty()) die("Stack underflow");
-    auto value = data_stack.back();
-    data_stack.pop_back();
+auto interp::interpreter::pop() -> word {
+    if (sp == 0) throw error("Stack underflow.");
+    return stack[--sp];
+}
+
+/// ===========================================================================
+///  Instruction Encoder.
+/// ===========================================================================
+static void write_imm(std::vector<u8>& bytecode, interp::word imm) {
+    /// Encode the immediate.
+    if (imm > UINT32_MAX) {
+        bytecode.resize(bytecode.size() + 8);
+        std::memcpy(bytecode.data() + bytecode.size() - 8, &imm, 8);
+    } else {
+        bytecode.resize(bytecode.size() + 4);
+        std::memcpy(bytecode.data() + bytecode.size() - 4, &imm, 4);
+    }
+}
+
+static void write_addr(std::vector<u8>& bytecode, interp::word imm) {
+    bytecode.resize(bytecode.size() + 8);
+    std::memcpy(bytecode.data() + bytecode.size() - 8, &imm, 8);
+}
+
+void interp::interpreter::encode_arithmetic(opcode op, reg rdest, reg r1, reg r2) {
+    /// These are invalid here.
+    if (r1 == 0 or r2 == 0 or r1 == 255 or r2 == 255)
+        throw error("This overload of encode_arithmetic() cannot be used with source registers 0 or 255.");
+
+    /// Make sure the registers are valid.
+    check_regs(rdest, r1, r2);
+
+    /// Encode the instruction.
+    bytecode.push_back(static_cast<opcode_t>(op));
+    bytecode.push_back(rdest);
+    bytecode.push_back(r1);
+    bytecode.push_back(r2);
+}
+
+void interp::interpreter::encode_arithmetic(opcode op, reg dest, reg src, word imm) {
+    /// Invalid here.
+    if (src == 0 or src == 255) throw error("Source register may not be 0 or 255.");
+
+    /// Make sure the registers are valid.
+    check_regs(dest, src);
+
+    /// Encode the instruction.
+    bytecode.push_back(static_cast<opcode_t>(op));
+    bytecode.push_back(dest);
+    bytecode.push_back(src);
+    bytecode.push_back(imm > UINT32_MAX ? arith_imm_64 : arith_imm_32);
+
+    /// Encode the immediate.
+    write_imm(bytecode, imm);
+}
+
+void interp::interpreter::encode_arithmetic(opcode op, reg dest, word imm, reg src) {
+    /// Invalid here.
+    if (src == 0 or src == 255) throw error("Source register may not be 0 or 255.");
+
+    /// Make sure the registers are valid.
+    check_regs(dest, src);
+
+    /// Encode the instruction.
+    bytecode.push_back(static_cast<opcode_t>(op));
+    bytecode.push_back(dest);
+    bytecode.push_back(imm > UINT32_MAX ? arith_imm_64 : arith_imm_32);
+    bytecode.push_back(src);
+
+    /// Encode the immediate.
+    write_imm(bytecode, imm);
+}
+
+interp::interpreter::arith_t interp::interpreter::decode_arithmetic() {
+    /// Decode the registers.
+    auto dest = bytecode[ip++];
+    auto reg_src1 = bytecode[ip++];
+    auto reg_src2 = bytecode[ip++];
+
+    /// Sanity check.
+    if ((reg_src1 == arith_imm_32 or reg_src2 == arith_imm_64) and //
+        (reg_src1 == arith_imm_64 or reg_src2 == arith_imm_32))
+        throw error("Invalid arithmetic instruction.");
+
+    /// Either src1 or src2 may be a 32/64 bit immediate.
+    const auto decode_value = [&](reg reg_src) -> word {
+        /// 32 bit immediate.
+        if (reg_src == arith_imm_32) {
+            word imm{};
+            std::memcpy(&imm, bytecode.data() + ip, 4);
+            ip += 4;
+            return imm;
+        }
+
+        /// 64 bit immediate.
+        if (reg_src == arith_imm_64) {
+            word imm{};
+            std::memcpy(&imm, bytecode.data() + ip, 8);
+            ip += 8;
+            return imm;
+        }
+
+        /// Register.
+        return registers[reg_src];
+    };
+
+    /// Extract the source values.
+    word src1 = decode_value(reg_src1);
+    word src2 = decode_value(reg_src2);
+
+    /// Return the instruction.
+    return {dest, src1, src2};
+}
+
+interp::word interp::interpreter::read_word_at_ip() {
+    word value{};
+    std::memcpy(&value, bytecode.data() + ip, 8);
+    ip += 8;
     return value;
 }
 
 /// ===========================================================================
 ///  Operations.
 /// ===========================================================================
-void interp::interpreter::create_return_void() { bytecode.push_back(static_cast<opcode_t>(opcode::ret)); }
-void interp::interpreter::create_return_value() { bytecode.push_back(static_cast<opcode_t>(opcode::retv)); }
-void interp::interpreter::create_addi() { bytecode.push_back(static_cast<opcode_t>(opcode::addi)); }
-void interp::interpreter::create_subi() { bytecode.push_back(static_cast<opcode_t>(opcode::subi)); }
-void interp::interpreter::create_muli() { bytecode.push_back(static_cast<opcode_t>(opcode::muli)); }
-void interp::interpreter::create_mulu() { bytecode.push_back(static_cast<opcode_t>(opcode::mulu)); }
-void interp::interpreter::create_divi() { bytecode.push_back(static_cast<opcode_t>(opcode::divi)); }
-void interp::interpreter::create_divu() { bytecode.push_back(static_cast<opcode_t>(opcode::divu)); }
-void interp::interpreter::create_remi() { bytecode.push_back(static_cast<opcode_t>(opcode::remi)); }
-void interp::interpreter::create_remu() { bytecode.push_back(static_cast<opcode_t>(opcode::remu)); }
-void interp::interpreter::create_shift_left() { bytecode.push_back(static_cast<opcode_t>(opcode::shl)); }
-void interp::interpreter::create_shift_right_logical() { bytecode.push_back(static_cast<opcode_t>(opcode::shr)); }
-void interp::interpreter::create_shift_right_arithmetic() { bytecode.push_back(static_cast<opcode_t>(opcode::sar)); }
+void interp::interpreter::create_return() { bytecode.push_back(static_cast<opcode_t>(opcode::ret)); }
 
-void interp::interpreter::create_push_int(i64 value) {
-    if (static_cast<u64>(value) < bit_mask_56) {
-        bytecode.push_back(static_cast<opcode_t>(opcode::push_int) | (static_cast<opcode_t>(value) << 8));
-    } else {
-        bytecode.push_back(static_cast<opcode_t>(opcode::push_int) | (bit_mask_56 << 8));
-        bytecode.push_back(static_cast<elem>(value));
-    }
+void interp::interpreter::create_move(reg dest, reg src) {
+    /// Make sure the registers are valid.
+    check_regs(dest, src);
+
+    /// Encode the instruction.
+    bytecode.push_back(static_cast<opcode_t>(opcode::mov));
+    bytecode.push_back(dest);
+    bytecode.push_back(src);
 }
+
+void interp::interpreter::create_move(reg dest, word imm) {
+    /// Make sure the registers are valid.
+    check_regs(dest);
+
+    /// Encode the instruction.
+    bytecode.push_back(static_cast<opcode_t>(opcode::mov));
+    bytecode.push_back(dest);
+    bytecode.push_back(imm > UINT32_MAX ? arith_imm_64 : arith_imm_32);
+
+    /// Encode the immediate.
+    write_imm(bytecode, imm);
+}
+
+#define ARITH(name, ...)                                                            \
+    void interp::interpreter::CAT(create_, name)(reg dest, reg src1, reg src2) /**/ \
+    { encode_arithmetic(opcode::name, dest, src1, src2); }                          \
+    void interp::interpreter::CAT(create_, name)(reg dest, reg src, word imm) /**/  \
+    { encode_arithmetic(opcode::name, dest, src, imm); }                            \
+    void interp::interpreter::CAT(create_, name)(reg dest, word imm, reg src) /**/  \
+    { encode_arithmetic(opcode::name, dest, imm, src); }
+INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
+#undef ARITH
 
 void interp::interpreter::create_call(const std::string& name) {
     /// Make sure the function exists.
     /// TODO: Handle parameters... somehow.
     /// TODO: Allow loading a shared library and calling a function from it. (e.g. puts).
     /// TODO: Add a crude wrapper to automatically wrap libc etc. functions.
-    ///       (e.g. call printf w/ 2 u64’s).
+    ///       (e.g. call printf w/ 2 word’s).
     /// TODO: Alternatively, write a tool that uses libtooling to generate wrappers.
     auto it = functions_map.find(name);
 
@@ -86,44 +209,30 @@ void interp::interpreter::create_call(const std::string& name) {
         functions_map[name] = functions.size();
         functions.emplace_back(std::monostate{});
 
-        /// Should never happen.
-        if (functions.size() > max_call_index)
-            throw error("Cannot create call to function \"{}\" because the call index is too large.", name);
-
         /// Push the opcode and call index.
-        bytecode.push_back(static_cast<opcode_t>(opcode::call) | (u64(functions.size() - 1) << 8u));
+        bytecode.push_back(static_cast<opcode_t>(opcode::call));
+        write_addr(bytecode, functions.size() - 1);
     }
 
     /// Function found.
     else {
-        /// Should never happen.
-        if (it->second >= max_call_index) throw error("Cannot create call to function \"{}\" because the call index is too large.", name);
-
         /// Push the opcode and call index.
-        bytecode.push_back(static_cast<opcode_t>(opcode::call) | (u64(it->second) << 8u));
+        bytecode.push_back(static_cast<opcode_t>(opcode::call));
+        write_addr(bytecode, it->second);
     }
 }
 
 void interp::interpreter::create_branch(addr target) {
-    if (target < bit_mask_56) {
-        bytecode.push_back(static_cast<opcode_t>(opcode::jmp) | (static_cast<opcode_t>(target) << 8));
-    } else {
-        bytecode.push_back(static_cast<opcode_t>(opcode::jmp) | (bit_mask_56 << 8));
-        bytecode.push_back(target);
-    }
+    /// Push the opcode and target.
+    bytecode.push_back(static_cast<opcode_t>(opcode::jmp));
+    write_addr(bytecode, target);
 }
 
-void interp::interpreter::create_branch_ifnz(addr target) {
-    if (target < bit_mask_56) {
-        bytecode.push_back(static_cast<opcode_t>(opcode::jnz) | (static_cast<opcode_t>(target) << 8));
-    } else {
-        bytecode.push_back(static_cast<opcode_t>(opcode::jnz) | (bit_mask_56 << 8));
-        bytecode.push_back(target);
-    }
-}
-
-void interp::interpreter::create_dup() {
-    bytecode.push_back(static_cast<opcode_t>(opcode::dup));
+void interp::interpreter::create_branch_ifnz(reg cond, addr target) {
+    /// Push the opcode, condition and target.
+    bytecode.push_back(static_cast<opcode_t>(opcode::jnz));
+    bytecode.push_back(cond);
+    write_addr(bytecode, target);
 }
 
 auto interp::interpreter::current_addr() const -> addr { return bytecode.size(); }
@@ -131,159 +240,122 @@ auto interp::interpreter::current_addr() const -> addr { return bytecode.size();
 /// ===========================================================================
 ///  Execute bytecode.
 /// ===========================================================================
-i64 interp::interpreter::run() {
-    stack_frame_count = 0;
-    data_stack.clear();
-    frame_stack.clear();
+interp::word interp::interpreter::run() {
+    stack_base = 0;
+    stack.clear();
+    stack.reserve(1024 * 1024);
     ip = ip_start_addr;
+    sp = 0;
 
-    /// Get the masked value encoded in this instruction, or the next value.
-    const auto masked_or_next = [&](opcode_t instruction) -> elem {
-        if ((instruction >> 8) == bit_mask_56) {
-            return bytecode[ip++];
-        } else {
-            return instruction >> 8;
-        }
-    };
+    /// Initialise registers.
+    for (auto& reg : registers) reg = 0;
 
+    /// Run the code.
     for (;;) {
         if (ip >= bytecode.size()) [[unlikely]] { throw error("Instruction pointer out of bounds."); }
-        switch (auto instruction = bytecode[ip]; static_cast<opcode>(instruction & 0xff)) {
-            static_assert(opcode_t(opcode::max_opcode) == 20);
+        switch (auto op = static_cast<opcode>(bytecode[ip++])) {
+            static_assert(opcode_t(opcode::max_opcode) == 18);
+            default: throw error("Invalid opcode {}", u8(op));
 
             /// Do nothing.
-            case opcode::nop: ip++; break;
+            case opcode::nop: break;
 
             /// Return from a function.
             case opcode::ret: {
-                if (stack_frame_count == 0) return 0;
+                if (stack_base == 0) return return_register;
 
                 /// Pop the stack frame.
-                stack_frame_count--;
-
-                /// Pop the return address.
-                ip = frame_stack.back().return_address;
-                frame_stack.pop_back();
+                sp = stack_base;
+                stack_base = pop();
+                ip = pop();
             } break;
 
-            /// Return from a function and push a value.
-            case opcode::retv: {
-                /// Return value.
-                auto retval = pop();
+            /// Move an immediate or a value from one register to another.
+            case opcode::mov: {
+                auto dest = static_cast<reg>(bytecode[ip++]);
+                auto src = static_cast<reg>(bytecode[ip++]);
 
-                /// Top frame; return from the program.
-                if (stack_frame_count == 0) return static_cast<i64>(retval);
+                /// Immediate.
+                if (src == arith_imm_32 || src == arith_imm_64) {
+                    word imm{};
+                    std::memcpy(&imm, bytecode.data() + ip, src == arith_imm_32 ? 4 : 8);
+                    ip += src == arith_imm_32 ? 4 : 8;
+                    registers[dest] = imm;
+                }
 
-                /// Pop the stack frame.
-                stack_frame_count--;
-
-                /// Pop the return address.
-                ip = frame_stack.back().return_address;
-                frame_stack.pop_back();
-
-                /// Push the return value.
-                push(retval);
-            } break;
-
-            /// Push an integer.
-            case opcode::push_int: {
-                ip++;
-                auto value = masked_or_next(instruction);
-                push(value);
+                /// Register.
+                else { registers[dest] = registers[src]; }
             } break;
 
             /// Add two integers.
-            case opcode::addi: {
-                ip++;
-                auto a = pop();
-                auto b = pop();
-                push(a + b);
+            case opcode::add: {
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = src1 + src2;
             } break;
 
             /// Subtract two integers.
-            case opcode::subi: {
-                ip++;
-                auto a = pop();
-                auto b = pop();
-                push(b - a);
+            case opcode::sub: {
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = src1 - src2;
             } break;
 
             /// Multiply two integers (signed).
             case opcode::muli: {
-                ip++;
-                i64 a = static_cast<i64>(pop());
-                i64 b = static_cast<i64>(pop());
-                push(static_cast<u64>(a * b));
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = word(i64(src1) * i64(src2));
             } break;
 
             /// Multiply two integers (unsigned).
             case opcode::mulu: {
-                ip++;
-                auto a = pop();
-                auto b = pop();
-                push(a * b);
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = src1 * src2;
             } break;
 
             /// Divide two integers (signed).
             case opcode::divi: {
-                ip++;
-                i64 a = static_cast<i64>(pop());
-                i64 b = static_cast<i64>(pop());
-                push(static_cast<u64>(b / a));
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = word(i64(src1) / i64(src2));
             } break;
 
             /// Divide two integers (unsigned).
             case opcode::divu: {
-                ip++;
-                auto a = pop();
-                auto b = pop();
-                push(b / a);
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = src1 / src2;
             } break;
 
             /// Remainder of two integers (signed).
             case opcode::remi: {
-                ip++;
-                i64 a = static_cast<i64>(pop());
-                i64 b = static_cast<i64>(pop());
-                push(static_cast<u64>(b % a));
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = word(i64(src1) % i64(src2));
             } break;
 
             /// Remainder of two integers (unsigned).
             case opcode::remu: {
-                ip++;
-                auto a = pop();
-                auto b = pop();
-                push(b % a);
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = src1 % src2;
             } break;
 
             /// Shift left.
             case opcode::shl: {
-                ip++;
-                auto a = pop();
-                auto b = pop();
-                push(b << a);
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = src1 << (src2 & 63);
             } break;
 
             /// Logical shift right.
             case opcode::shr: {
-                ip++;
-                auto a = pop();
-                auto b = pop();
-                push(b >> a);
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = src1 >> (src2 & 63);
             } break;
 
             /// Arithmetic shift right.
             case opcode::sar: {
-                ip++;
-                auto a = pop();
-                i64 b = static_cast<i64>(pop());
-                push(static_cast<u64>(static_cast<i64>(b) >> a));
+                auto [dest, src1, src2] = decode_arithmetic();
+                registers[dest] = word(i64(src1) >> (src2 & 63));
             } break;
 
             /// Call a function.
             case opcode::call: {
-                usz index = instruction >> 8u;
-                ip++;
+                auto index = read_word_at_ip();
 
                 /// Make sure the index is valid.
                 if (index >= functions.size()) [[unlikely]] { throw error("Call index out of bounds"); }
@@ -296,46 +368,35 @@ i64 interp::interpreter::run() {
 
                 /// Otherwise, push the return address and jump to the function.
                 else if (std::holds_alternative<addr>(func)) {
-                    frame_stack.push_back({ip});
+                    push(ip);
+                    push(stack_base);
+                    stack_base = sp;
                     ip = std::get<addr>(func);
-                    stack_frame_count++;
                 }
 
                 /// Unknown function.
                 else {
                     /// Try to get the function name.
-                    auto it = std::find_if(functions_map.begin(), functions_map.end(), [&](auto& f) { return f.second == index; });
-                    if (it != functions_map.end()) {
-                        throw error("Unknown function \"{}\" called.", it->first);
-                    } else {
-                        throw error("Unknown function with index {} called.", index);
-                    }
+                    auto it = ranges::find_if(functions_map, [&](auto& f) { return f.second == index; });
+                    if (it != functions_map.end()) throw error("Unknown function \"{}\" called.", it->first);
+                    else throw error("Unknown function with index {} called.", index);
                 }
             } break;
 
             /// Jump to an address.
             case opcode::jmp: {
-                ip++;
-                auto target = masked_or_next(instruction);
-                if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds."); }
+                auto target = read_word_at_ip();
+                if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds"); }
                 ip = target;
             } break;
 
             /// Jump to an address if the top of the stack is not zero.
             case opcode::jnz: {
-                ip++;
-                auto target = masked_or_next(instruction);
-                if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds."); }
-                if (pop()) ip = target;
+                reg r = bytecode[ip++];
+                auto target = read_word_at_ip();
+                if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds"); }
+                if (registers[r]) ip = target;
             } break;
-
-            /// Duplicate the top of the stack.
-            case opcode::dup: {
-                ip++;
-                push(data_stack.back());
-            } break;
-
-            default: throw error("Invalid opcode.");
         }
     }
 }
@@ -344,124 +405,157 @@ i64 interp::interpreter::run() {
 ///  Disassembler.
 /// ===========================================================================
 std::string interp::interpreter::disassemble() const {
-    static constexpr auto padding = "   ";
     std::string result;
 
-    /// Determine the number of nonzero bytes of the greatest number in the bytecode.
+    /*/// Determine the number of nonzero bytes of the greatest number in the bytecode.
     auto padd_to = ranges::max(bytecode | views::transform(std::bind_front(number_width, 16)));
 
     /// Round up to the nearest multiple of 2, and divide by 2.
-    padd_to = (padd_to + (padd_to & 1)) / 2;
+    padd_to = (padd_to + (padd_to & 1)) / 2;*/
 
-    /// Print 8 bytes as hex, two digits at a time.
-    const auto print_hex = [&result, padd_to](usz number) {
-        auto opcode = number & 0xff;
-        for (usz i = 0; i < 8; i++) {
-            if (not number) {
-                /// Still print the number if it’s 0 or if the instruction takes an operand.
-                if (i == 0 or (i == 1 and ( // clang-format off
-                    opcode == u8(opcode::push_int) or
-                    opcode == u8(opcode::call) or
-                    opcode == u8(opcode::jmp) or
-                    opcode == u8(opcode::jnz)
-                ))) { // clang-format on
-                    result += fmt::format(" {:02x}", number & 0xff);
-                    i++;
-                }
-
-                /// Align to padding.
-                for (usz j = i; j < padd_to; j++) result += "   ";
-                break;
-            } else {
-                result += fmt::format(" {:02x}", number & 0xff);
-                number >>= 8;
-            }
-        }
-    };
-
-    /// Extract the opcode from an instruction.
+    /// Declare this here since it’s used by some of the lambdas below.
     usz i = 0;
-    const auto print_masked_or_next = [&](opcode_t instruction) {
-        const auto masked = (instruction >> 8) == bit_mask_56;
-        result += fmt::format("{}\n", masked ? bytecode[i + 1] : instruction >> 8);
-        if (masked) {
-            i++;
-            result += fmt::format("[{:08x}]:", i);
-            print_hex(bytecode[i]);
-            result += "\n";
+
+    /// Print an arithmetic instruction.
+    const auto print_arith = [&](auto&& str) { // clang-format off
+        /// Bytes for the opcode, dest, src1, and src2.
+        auto r = fmt::format_to(std::back_inserter(result), "{:02x} {:02x} {:02x} ",
+            bytecode[i], bytecode[i + 1], bytecode[i + 2]);
+
+        /// Check if we have an immediate operand.
+        usz imm = 0;
+        if (bytecode[i + 1] == arith_imm_32 or bytecode[i + 1] == arith_imm_64) imm = 1;
+        else if (bytecode[i + 2] == arith_imm_32 or bytecode[i + 2] == arith_imm_64) imm = 2;
+
+        /// Extract the immediate value and print the first 4 bytes of the immediate if we have one.
+        word imm_value{};
+        if (imm) {
+            std::memcpy(&imm_value, bytecode.data() + i + 3,
+                bytecode[i + imm] == arith_imm_32 ? 4 : 8);
+
+            r = fmt::format_to(r, "{:02x} {:02x} {:02x} {:02x} ",
+                bytecode[i + 3], bytecode[i + 4], bytecode[i + 5], bytecode[i + 6]);
         }
+
+        /// Print the mnemonic.
+        r = fmt::format_to(r, "         {} r{}", str, bytecode[i]);
+        r = imm == 1
+            ? fmt::format_to(r, ", {}", imm_value)
+            : fmt::format_to(r, ", r{}", bytecode[i + 1]);
+        r = imm == 2
+            ? fmt::format_to(r, ", {}\n", imm_value)
+            : fmt::format_to(r, ", r{}\n", bytecode[i + 2]);
+
+        /// Print 4 more bytes if we have a a 64-bit immediate.
+        if (imm and bytecode[i + imm] == arith_imm_64)
+            fmt::format_to(r, "[{:08x}]: {:02x} {:02x} {:02x} {:02x}\n",
+                i + 7, bytecode[i + 7], bytecode[i + 8], bytecode[i + 9], bytecode[i + 10]);
+
+       /// Yeet the instruction.
+       i += 3;
+       if (imm) i += bytecode[i + imm] == arith_imm_32 ? 4zu : 8zu;
+    }; // clang-format on
+
+    /// Print an address and return it.
+    const auto print_and_read_addr = [&]() {
+        /// Print the bytes that make up the index.
+        result += fmt::format("{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",                       //
+                              bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], //
+                              bytecode[i + 5], bytecode[i + 6], bytecode[i + 7]);
+
+        /// Extract the index.
+        addr index;
+        std::memcpy(&index, bytecode.data() + i, 8);
+        i += 8;
+        return index;
     };
 
     /// Iterate over the bytecode and disassemble each instruction.
-    for (; i < bytecode.size(); i++) {
+    while (i < bytecode.size()) {
         /// Print address.
-        result += fmt::format("[{:08x}]:", i);
-
-        /// Print the bytes.
-        auto instruction = bytecode[i];
-        print_hex(instruction);
-
-        /// Print a few spaces for visual separation.
-        result += padding;
+        result += fmt::format("[{:08x}]: {:02x} ", i, bytecode[i]);
 
         /// Print the instruction mnemonic.
-        switch (static_cast<opcode>(instruction & 0xff)) {
-            static_assert(opcode_t(opcode::max_opcode) == 20);
+        switch (auto op = static_cast<opcode>(bytecode[i++])) {
+            static_assert(opcode_t(opcode::max_opcode) == 18);
             default:
-                if (i == 0) result += ".sentinel\n";
-                else result += "???\n";
+                repeat (8) result += "   ";
+                if (i == 1 and op == opcode::invalid) result += "      .sentinel\n";
+                else result += "      ???\n";
                 break;
-            case opcode::nop: result += "nop\n"; break;
-            case opcode::ret: result += "ret\n"; break;
-            case opcode::retv: result += "retv\n"; break;
-            case opcode::push_int:
-                if (i == bytecode.size() - 1) {
-                    result += "pushi ???\n";
-                    break;
-                }
-                result += "pushi ";
-                print_masked_or_next(instruction);
+            case opcode::nop:
+                repeat (8) result += "   ";
+                result += "      nop\n";
                 break;
-            case opcode::addi: result += "addi\n"; break;
-            case opcode::subi: result += "subi\n"; break;
-            case opcode::muli: result += "muli\n"; break;
-            case opcode::mulu: result += "mulu\n"; break;
-            case opcode::divi: result += "divi\n"; break;
-            case opcode::divu: result += "divu\n"; break;
-            case opcode::remi: result += "remi\n"; break;
-            case opcode::remu: result += "remu\n"; break;
-            case opcode::shl: result += "shl\n"; break;
-            case opcode::sar: result += "sar\n"; break;
-            case opcode::shr: result += "shr\n"; break;
-            case opcode::call:
-                if (i == bytecode.size() - 1) {
-                    result += "call ???\n";
-                    break;
-                }
-                result += "call ";
-                print_masked_or_next(instruction);
+            case opcode::ret:
+                repeat (8) result += "   ";
+                result += "      ret\n";
                 break;
-            case opcode::jmp:
-                if (i == bytecode.size() - 1) {
-                    result += "jmp ???\n";
-                    break;
-                }
-                result += "jmp ";
-                print_masked_or_next(instruction);
-                break;
-            case opcode::jnz:
-                if (i == bytecode.size() - 1) {
-                    result += "jnz ???\n";
-                    break;
-                }
-                result += "jnz ";
-                print_masked_or_next(instruction);
-                break;
-            case opcode::dup: result += "dup\n"; break;
-        }
 
-        /// Next instruction.
-        continue;
+            case opcode::mov: { // clang-format off
+                /// Bytes for the opcode, dest, src1, and src2.
+                auto r = fmt::format_to(std::back_inserter(result), "{:02x} {:02x} ",
+                    bytecode[i], bytecode[i + 1]);
+
+                /// Check if we have an immediate operand.
+                bool imm = bytecode[i + 1] == arith_imm_32 or bytecode[i + 1] == arith_imm_64;
+
+                /// Extract the immediate value and print the first 4 bytes of the immediate if we have one.
+                word imm_value{};
+                if (imm) {
+                    std::memcpy(&imm_value, bytecode.data() + i + 2,
+                        bytecode[i + imm] == arith_imm_32 ? 4 : 8);
+
+                    r = fmt::format_to(r, "{:02x} {:02x} {:02x} {:02x} ",
+                        bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], bytecode[i + 5]);
+                }
+
+                /// Print the mnemonic.
+                r = fmt::format_to(r, "            mov r{}", bytecode[i]);
+                r = imm
+                    ? fmt::format_to(r, ", {}\n", imm_value)
+                    : fmt::format_to(r, ", r{}\n", bytecode[i + 1]);
+
+                /// Print 4 more bytes if we have a a 64-bit immediate.
+                if (imm and bytecode[i + 1] == arith_imm_64)
+                    fmt::format_to(r, "[{:08x}]: {:02x} {:02x} {:02x} {:02x}\n",
+                        i + 6, bytecode[i + 6], bytecode[i + 7], bytecode[i + 8], bytecode[i + 9]);
+
+                /// Yeet the instruction.
+                i += 2;
+                if (imm) i += bytecode[i + 1] == arith_imm_32 ? 4zu : 8zu;
+            } break; // clang-format on
+
+            case opcode::add: print_arith("add"); break;
+            case opcode::sub: print_arith("sub"); break;
+            case opcode::muli: print_arith("muli"); break;
+            case opcode::mulu: print_arith("mulu"); break;
+            case opcode::divi: print_arith("divi"); break;
+            case opcode::divu: print_arith("divu"); break;
+            case opcode::remi: print_arith("remi"); break;
+            case opcode::remu: print_arith("remu"); break;
+            case opcode::shl: print_arith("shl"); break;
+            case opcode::sar: print_arith("sar"); break;
+            case opcode::shr: print_arith("shr"); break;
+            case opcode::call: {
+                auto index = print_and_read_addr();
+
+                /// Try and resolve the function name.
+                auto it = ranges::find_if(functions_map, [&](auto&& f) { return f.second == index; });
+                if (it != functions_map.end()) result += fmt::format("       call {} (index: {})\n", it->first, index);
+                else result += fmt::format("      call {}\n", index);
+            } break;
+            case opcode::jmp: {
+                auto a = print_and_read_addr();
+                result += fmt::format("       jmp {}\n", a);
+            } break;
+            case opcode::jnz: {
+                auto r = bytecode[i++];
+                result += fmt::format("{:02x} ", r);
+                auto a = print_and_read_addr();
+                result += fmt::format("    jnz r{}, {}\n", r, a);
+            } break;
+        }
     }
 
     return result;

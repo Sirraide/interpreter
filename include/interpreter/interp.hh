@@ -3,15 +3,15 @@
 
 /// Make sure we don’t try to include this header from C.
 #ifndef __cplusplus
-#   error "This header is C++ only. Use <interpreter/interp.h> instead."
+#    error "This header is C++ only. Use <interpreter/interp.h> instead."
 #endif
 
+#include <functional>
 #include <interpreter/interp.h>
 #include <interpreter/utils.hh>
-#include <functional>
 #include <unordered_map>
-#include <vector>
 #include <variant>
+#include <vector>
 
 /// Don’t want to deal w/ this rn.
 static_assert(sizeof(void*) == 8 && sizeof(usz) == 8, "Only 64-bit systems are supported.");
@@ -25,10 +25,17 @@ namespace interp {
 struct interpreter;
 
 /// Typedefs.
-using opcode_t = u64;
+using opcode_t = u8;
 using addr = usz;
 using native_function = std::function<void(interpreter&)>;
-using elem = u64;
+using reg = u8;
+using word = u64;
+
+/// Literals.
+namespace literals {
+constexpr reg operator""_r(unsigned long long r) { return static_cast<reg>(r); }
+constexpr word operator""_w(unsigned long long a) { return static_cast<word>(a); }
+} // namespace literals
 
 /// Opcode.
 enum struct opcode : opcode_t {
@@ -40,65 +47,76 @@ enum struct opcode : opcode_t {
     /// Return from a function or stop the interpreter.
     ret,
 
-    /// Return the top of the stack from a function or from the program.
-    retv,
+    /// Move a register or immediate to a register.
+    mov,
 
-    /// Push an integer onto the stack.
-    /// Operands: value (7 last bytes of the opcode, or 8 extra bytes)
-    push_int,
+    /// Add integers.
+    /// Encoding: arithmetic encoding.
+    add,
 
-    /// Add the top two values on the stack as integers.
-    addi,
+    /// Subtract integers.
+    /// Encoding: arithmetic encoding.
+    sub,
 
-    /// Subtract the second value on the stack from the top value (integers).
-    subi,
-
-    /// Multiply the top two values on the stack (integers).
+    /// Multiply values.
+    /// Encoding: arithmetic encoding.
     muli,
     mulu,
 
-    /// Divide the top of the stack by the second value (integers).
+    /// Divide values.
+    /// Encoding: arithmetic encoding.
     divi,
     divu,
 
-    /// Compute the remainder of the top of the stack divided by the second value (integers).
+    /// Compute the remainder of a division.
+    /// Encoding: arithmetic encoding.
     remi,
     remu,
 
-    /// Shift the top of the stack left by the second value.
+    /// Shift left.
+    /// Encoding: arithmetic encoding.
     shl,
 
-    /// Shift the top of the stack right by the second value.
+    /// Shift right.
+    /// Encoding: arithmetic encoding.
     sar,
     shr,
 
     /// Function call.
-    /// Operands: index (7 remaining bytes of operands).
+    /// Operands: index (word).
     /// The index is the index of the function in the function table.
     call,
 
     /// Jump to an address.
-    /// Operands: address (7 last bytes of the opcode, or 8 extra bytes)
+    /// Operands: address (word)
     jmp,
 
-    /// Jump to an address if the top of the stack is nonzero.
-    /// Operands: address (7 last bytes of the opcode, or 8 extra bytes)
+    /// Jump to an address if a register is nonzero.
+    /// Operands: condition (register), address (word)
     jnz,
-
-    /// Duplicate the top of the stack.
-    dup,
 
     /// For sanity checks.
     max_opcode
 };
 
-/// Opcodes may only be 1 byte.
-static_assert(opcode_t(opcode::max_opcode) < 256);
+/// Macro used for codegenning arithmetic instructions.
+#define INTERP_ALL_ARITHMETIC_INSTRUCTIONS(F) \
+    F(add, +, word)                           \
+    F(sub, -, word)                           \
+    F(muli, *, i64)                           \
+    F(mulu, *, word)                          \
+    F(divi, /, i64)                           \
+    F(divu, /, word)                          \
+    F(remi, %, i64)                           \
+    F(remu, %, word)                          \
+    F(shl, <<, word)                          \
+    F(sar, >>, i64)                           \
+    F(shr, >>, word)
 
 /// Error type.
 struct error : std::runtime_error {
-    template <typename ...arguments>
-    error(fmt::format_string<arguments...> fmt, arguments&& ...args)
+    template <typename... arguments>
+    error(fmt::format_string<arguments...> fmt, arguments&&... args)
         : std::runtime_error(fmt::format(fmt, std::forward<arguments>(args)...)) {}
 };
 
@@ -108,22 +126,23 @@ struct error : std::runtime_error {
 /// This holds the interpreter state.
 /// TODO: Should be class. struct for now for testing purposes.
 struct interpreter : ::interp_handle_t {
-    /// Stack frame.
-    struct frame {
-        addr return_address{};
-
-        /// TODO: locals.
-    };
-
-    /// The code that we’re executing.
-    std::vector<elem> bytecode;
-
     /// Instruction pointer.
     addr ip{};
 
+    /// Registers.
+    std::array<word, 64> registers;
+    word& return_register = registers[0];
+
+    /// Stack pointer.
+    addr sp{};
+
+private:
+    /// The code that we’re executing.
+    std::vector<u8> bytecode;
+
     /// The stack.
-    std::vector<elem> data_stack;
-    std::vector<frame> frame_stack;
+    std::vector<word> stack;
+    addr stack_base;
 
     /// Functions in the bytecode. NEVER reorder or remove elements from these.
     std::vector<std::variant<std::monostate, addr, native_function>> functions;
@@ -132,26 +151,66 @@ struct interpreter : ::interp_handle_t {
     /// How many stack frames deep we are.
     usz stack_frame_count{};
 
+    /// Constants.
+    constexpr static usz ip_start_addr = 1;
+    constexpr static u8 arith_imm_32 = 0;
+    constexpr static u8 arith_imm_64 = 255;
+
+    /// ===========================================================================
+    ///  Encoder/decoder.
+    /// ===========================================================================
+    /// Check if registers are valid.
+    void check_regs(std::same_as<reg> auto... regs) const {
+        ([this](reg r) {
+            if (r >= registers.size()) {
+                throw error("Invalid register: {}", r);
+            }
+        }(regs),
+         ...);
+    }
+
+    /// Encode an arithmetic instruction.
+    ///
+    /// Arithmetic encoding works as follows: An instruction is 4 bytes
+    /// long. The opcode is the first byte, the destination register the
+    /// second byte, and the last two bytes are the two source registers.
+    ///
+    /// If one of the source registers is arith_imm_32 (or arith_imm_64),
+    /// then the next 4 (or 8) bytes are an immediate value that is to
+    /// be used instead.
+    ///
+    /// Both source registers cannot be 0 or 255.
+    void encode_arithmetic(opcode op, reg dest, reg r1, reg r2);
+    void encode_arithmetic(opcode op, reg dest, reg src, word imm);
+    void encode_arithmetic(opcode op, reg dest, word imm, reg src);
+    void encode_arithmetic(auto...) = delete;
+
+    /// Decode an arithmetic instruction.
+    struct arith_t {
+        reg dest;
+        word src1;
+        word src2;
+    };
+    arith_t decode_arithmetic();
+
+    /// Read a word at the current position of the instruction pointer.
+    word read_word_at_ip();
+
+public:
+    /// Maximum stack size.
+    usz max_stack_size = 1024 * 1024;
+
     /// Last error. Used by the C API.
     std::string last_error;
 
-    /// Constants.
-    constexpr static usz bit_mask_56 = 0x00ff'ffff'ffff'ffffzu;
-    constexpr static usz max_call_index = bit_mask_56;
-    constexpr static usz ip_start_addr = 1;
-
-public:
     /// ===========================================================================
     ///  Stack manipulation.
     /// ===========================================================================
     /// Push a value onto the stack.
-    void push(elem value);
+    void push(word value);
 
     /// Pop a value from the stack.
-    elem pop();
-
-    /// Maximum stack size.
-    usz max_stack_size = 1024 * 1024;
+    word pop();
 
     /// Construct an interpreter.
     interpreter() {
@@ -173,94 +232,43 @@ public:
 
     /// Run the interpreter().
     /// \return The return value of the program.
-    i64 run();
+    word run();
 
     /// ===========================================================================
     ///  Operations.
     /// ===========================================================================
-    /// Create a return instruction that returns from the current function
-    /// without a return value.
-    void create_return_void();
+    /// Create a return instruction.
+    void create_return();
 
-    /// Create a return instruction that returns from the current function;
-    /// the return value is the top of the stack.
-    void create_return_value();
+    /// Create a move instruction.
+    void create_move(reg dest, reg src);
+    void create_move(reg dest, word imm);
+    void create_move(auto...) = delete;
 
-    /// Create an instruction that pushes an integer onto the stack.
-    void create_push_int(i64 value);
-
-    /// Create an instruction that adds the top two values on the stack
-    /// and pushes the result.
-    void create_addi();
-
-    /// Create an instruction that subtracts the top of the stack from the
-    /// second value on the stack and pushes the result.
-    void create_subi();
-
-    /// Create an instruction that multiplies the top two values on the stack
-    /// and pushes the result.
-    ///
-    /// This is signed multiplication, for unsigned multiplication use `create_mulu`.
-    void create_muli();
-
-    /// Create an instruction that multiplies the top two values on the stack
-    /// and pushes the result.
-    ///
-    /// This is unsigned multiplication, for signed multiplication use `create_muli`.
-    void create_mulu();
-
-    /// Create an instruction that divides the second value on the stack by the
-    /// top value and pushes the result.
-    ///
-    /// This is signed division, for unsigned division use `create_divu`.
-    void create_divi();
-
-    /// Create an instruction that divides the second value on the stack by the
-    /// top value and pushes the result.
-    ///
-    /// This is unsigned division, for signed division use `create_divi`.
-    void create_divu();
-
-    /// Create an instruction that computes the remainder of the second value on the stack
-    /// divided by the top value and pushes the result.
-    ///
-    /// This operation is signed, for unsigned remainder use `create_remu`.
-    void create_remi();
-
-    /// Create an instruction that computes the remainder of the second value on the stack
-    /// divided by the top value and pushes the result.
-    ///
-    /// This operation is unsigned, for signed remainder use `create_remi`.
-    void create_remu();
-
-    /// Create an instruction that shifts the second value on the stack left by the
-    /// top value and pushes the result.
-    void create_shift_left();
-
-    /// Create an instruction that shifts the second value on the stack right by the
-    /// top value and pushes the result.
-    void create_shift_right_arithmetic();
-
-    /// Create an instruction that shifts the second value on the stack right by the
-    /// top value and pushes the result.
-    void create_shift_right_logical();
+    /// Arithmetic instructions
+#define ARITH(name, ...)                                   \
+    void CAT(create_, name)(reg dest, reg src1, reg src2); \
+    void CAT(create_, name)(reg dest, reg src, word imm);  \
+    void CAT(create_, name)(reg dest, word imm, reg src);  \
+    void CAT(create_, name)(auto...) = delete;
+    INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
+#undef ARITH
 
     /// Create a call to a function.
     void create_call(const std::string& name);
 
     /// Create a direct branch.
     void create_branch(addr target);
+    void create_branch(auto...) = delete;
 
     /// Create a conditional branch that branches if the top of the stack is nonzero.
-    void create_branch_ifnz(addr target);
-
-    /// Duplicate the top of the stack.
-    void create_dup();
+    void create_branch_ifnz(reg condition, addr target);
+    void create_branch_ifnz(auto...) = delete;
 
     /// Get the current address.
     addr current_addr() const;
 };
 
-}
+} // namespace interp
 
 #endif // INTERPRETER_INTERP_HH
