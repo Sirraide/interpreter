@@ -61,6 +61,32 @@ void interp::interpreter::r(reg r, word value) {
     set_register(r, value);
 }
 
+constexpr static usz address_operand_size(interp::opcode op) {
+    switch (op) {
+        case interp::opcode::call8:
+        case interp::opcode::jmp8:
+        case interp::opcode::jnz8:
+            return 1;
+
+        case interp::opcode::call16:
+        case interp::opcode::jmp16:
+        case interp::opcode::jnz16:
+            return 2;
+
+        case interp::opcode::call32:
+        case interp::opcode::jmp32:
+        case interp::opcode::jnz32:
+            return 4;
+
+        case interp::opcode::call64:
+        case interp::opcode::jmp64:
+        case interp::opcode::jnz64:
+            return 8;
+
+        default: return 0;
+    }
+}
+
 /// ===========================================================================
 ///  Instruction Encoder.
 /// ===========================================================================
@@ -76,8 +102,13 @@ static void write_imm(std::vector<u8>& bytecode, interp::word imm) {
 }
 
 static void write_addr(std::vector<u8>& bytecode, interp::word imm) {
-    bytecode.resize(bytecode.size() + 8);
-    std::memcpy(bytecode.data() + bytecode.size() - 8, &imm, 8);
+    usz sz;
+    if (imm < UINT8_MAX) sz = 1;
+    else if (imm < UINT16_MAX) sz = 2;
+    else if (imm < UINT32_MAX) sz = 4;
+    else sz = 8;
+    bytecode.resize(bytecode.size() + sz);
+    std::memcpy(bytecode.data() + bytecode.size() - sz, &imm, sz);
 }
 
 static bool is_imm(interp::reg r) {
@@ -174,10 +205,13 @@ interp::interpreter::arith_t interp::interpreter::decode_arithmetic() {
     return {static_cast<reg>(dest), src1, src2};
 }
 
-interp::word interp::interpreter::read_word_at_ip() {
+interp::word interp::interpreter::read_sized_address_at_ip(opcode op) {
+    usz sz = address_operand_size(op);
+    if (not sz) throw error("Opcode {} does not support read_sized_address_at_ip()", static_cast<u8>(op));
+
     word value{};
-    std::memcpy(&value, bytecode.data() + ip, 8);
-    ip += 8;
+    std::memcpy(&value, bytecode.data() + ip, sz);
+    ip += sz;
     return value;
 }
 
@@ -250,31 +284,44 @@ void interp::interpreter::create_call(const std::string& name) {
 
     /// Function not found. Add an empty record.
     if (it == functions_map.end()) {
+        /// Push the opcode and call index.
+        if (functions.size() < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call8));
+        else if (functions.size() < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call16));
+        else if (functions.size() < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call32));
+        else bytecode.push_back(static_cast<opcode_t>(opcode::call64));
+        write_addr(bytecode, functions.size());
+
+        /// Add the record.
         functions_map[name] = functions.size();
         functions.emplace_back(std::monostate{});
-
-        /// Push the opcode and call index.
-        bytecode.push_back(static_cast<opcode_t>(opcode::call));
-        write_addr(bytecode, functions.size() - 1);
     }
 
     /// Function found.
     else {
         /// Push the opcode and call index.
-        bytecode.push_back(static_cast<opcode_t>(opcode::call));
+        if (it->second < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call8));
+        else if (it->second < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call16));
+        else if (it->second < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call32));
+        else bytecode.push_back(static_cast<opcode_t>(opcode::call64));
         write_addr(bytecode, it->second);
     }
 }
 
 void interp::interpreter::create_branch(addr target) {
     /// Push the opcode and target.
-    bytecode.push_back(static_cast<opcode_t>(opcode::jmp));
+    if (target < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jmp8));
+    else if (target < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jmp16));
+    else if (target < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jmp32));
+    else bytecode.push_back(static_cast<opcode_t>(opcode::jmp64));
     write_addr(bytecode, target);
 }
 
 void interp::interpreter::create_branch_ifnz(reg cond, addr target) {
     /// Push the opcode, condition and target.
-    bytecode.push_back(static_cast<opcode_t>(opcode::jnz));
+    if (target < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jnz8));
+    else if (target < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jnz16));
+    else if (target < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jnz32));
+    else bytecode.push_back(static_cast<opcode_t>(opcode::jnz64));
     bytecode.push_back(+cond);
     write_addr(bytecode, target);
 }
@@ -312,7 +359,7 @@ interp::word interp::interpreter::run() {
     for (;;) {
         if (ip >= bytecode.size()) [[unlikely]] { throw error("Instruction pointer out of bounds."); }
         switch (auto op = static_cast<opcode>(bytecode[ip++])) {
-            static_assert(opcode_t(opcode::max_opcode) == 18);
+            static_assert(opcode_t(opcode::max_opcode) == 27);
             default: throw error("Invalid opcode {}", u8(op));
 
             /// Do nothing.
@@ -412,8 +459,11 @@ interp::word interp::interpreter::run() {
             } break;
 
             /// Call a function.
-            case opcode::call: {
-                auto index = read_word_at_ip();
+            case opcode::call8:
+            case opcode::call16:
+            case opcode::call32:
+            case opcode::call64: {
+                auto index = read_sized_address_at_ip(op);
 
                 /// Make sure the index is valid.
                 if (index >= functions.size()) [[unlikely]] { throw error("Call index out of bounds"); }
@@ -442,16 +492,21 @@ interp::word interp::interpreter::run() {
             } break;
 
             /// Jump to an address.
-            case opcode::jmp: {
-                auto target = read_word_at_ip();
-                if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds"); }
-                ip = target;
+            case opcode::jmp8:
+            case opcode::jmp16:
+            case opcode::jmp32:
+            case opcode::jmp64: {
+                ip = read_sized_address_at_ip(op);
+                if (ip >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds"); }
             } break;
 
             /// Jump to an address if the top of the stack is not zero.
-            case opcode::jnz: {
+            case opcode::jnz8:
+            case opcode::jnz16:
+            case opcode::jnz32:
+            case opcode::jnz64: {
                 reg r = static_cast<reg>(bytecode[ip++]);
-                auto target = read_word_at_ip();
+                auto target = read_sized_address_at_ip(op);
                 if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds"); }
                 if (read_register(r)) ip = target;
             } break;
@@ -472,7 +527,7 @@ std::string interp::interpreter::disassemble() const {
     padd_to = (padd_to + (padd_to & 1)) / 2;*/
 
     /// Declare this here since it’s used by some of the lambdas below.
-    usz i = 0;
+    usz i = ip_start_addr;
 
     /// For colours.
     using enum fmt::terminal_color;
@@ -544,21 +599,56 @@ std::string interp::interpreter::disassemble() const {
     }; // clang-format on
 
     /// Print an address and return it.
-    const auto print_and_read_addr = [&](auto c) {
-        /// Print the bytes that make up the index.
-        result += fmt::format(fg(c), "{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",                //
-                              bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], //
-                              bytecode[i + 5], bytecode[i + 6], bytecode[i + 7]);
+    const auto print_and_read_addr = [&](auto c, opcode op) {
+        usz sz = address_operand_size(op);
+        switch (sz) {
+            case 1:
+                result += fmt::format(fg(c), "{:02x}", bytecode[i]);
+                break;
+
+            case 2:
+                result += fmt::format(fg(c), "{:02x} {:02x}", bytecode[i], bytecode[i + 1]);
+                break;
+
+            case 4:
+                result += fmt::format(fg(c), "{:02x} {:02x} {:02x} {:02x}", //
+                                      bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3]);
+                break;
+
+            case 8:
+                result += fmt::format(fg(c), "{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",                //
+                                      bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], //
+                                      bytecode[i + 5], bytecode[i + 6], bytecode[i + 7]);
+                break;
+
+            default: result += fmt::format(fg(white), "???");
+        }
 
         /// Extract the index.
-        addr index;
-        std::memcpy(&index, bytecode.data() + i, 8);
-        i += 8;
+        addr index{};
+        std::memcpy(&index, bytecode.data() + i, sz);
+        i += sz;
         return index;
     };
 
+    /// Entry point.
+    result += fmt::format(fg(green), "__entry__{}\n", styled(":", fg(orange)));
+
     /// Iterate over the bytecode and disassemble each instruction.
     while (i < bytecode.size()) {
+        /// Check if there is a function that starts at this address.
+        auto func = ranges::find_if(functions_map, [&](auto&& p) {
+            return p.second < functions.size()
+                   and std::holds_alternative<addr>(functions[p.second])
+                   and std::get<addr>(functions[p.second]) == i;
+        });
+
+        /// Print the function name if there is one.
+        if (func != functions_map.end()) {
+            if (i != 1) result += "\n";
+            result += fmt::format(fg(green), "{}{}\n", func->first, styled(":", fg(orange)));
+        }
+
         /// Print address.
         result += fmt::format(fg(orange), "[{:08x}]: ", i);
         if (i == 0) result += fmt::format(fg(white), "00 ", bytecode[i]);
@@ -567,7 +657,7 @@ std::string interp::interpreter::disassemble() const {
 
         /// Print the instruction mnemonic.
         switch (auto op = static_cast<opcode>(bytecode[i++])) {
-            static_assert(opcode_t(opcode::max_opcode) == 18);
+            static_assert(opcode_t(opcode::max_opcode) == 27);
             default:
                 repeat (8) result += "   ";
                 if (i == 1 and op == opcode::invalid) result += fmt::format(fg(white), "      .sentinel\n");
@@ -629,29 +719,43 @@ std::string interp::interpreter::disassemble() const {
             case opcode::shl: print_arith("shl"); break;
             case opcode::sar: print_arith("sar"); break;
             case opcode::shr: print_arith("shr"); break;
-            case opcode::call: {
-                auto index = print_and_read_addr(green);
+            case opcode::call8:
+            case opcode::call16:
+            case opcode::call32:
+            case opcode::call64: {
+                auto index = print_and_read_addr(green, op);
+                repeat (8 - address_operand_size(op)) result += "   ";
 
                 /// Try and resolve the function name.
                 auto it = ranges::find_if(functions_map, [&](auto&& f) { return f.second == index; });
-                if (it != functions_map.end()) {
-                    result += fmt::format(fg(yellow), "       call ");
-                    result += it->second >= functions.size() // clang-format off
-                              or functions[it->second].valueless_by_exception()
-                              or std::holds_alternative<std::monostate>(functions[it->second])
-                                  ? fmt::format(fg(white), "{}\n", it->first)
-                                  : fmt::format(fg(green), "{}\n", it->first); // clang-format on
-                } else result += fmt::format("      {} {}\n", styled("call", fg(yellow)), styled(index, fg(green)));
+                if (it != functions_map.end() and it->second < functions.size()
+                    and not functions[it->second].valueless_by_exception()
+                    and not std::holds_alternative<std::monostate>(functions[it->second])) {
+                    result += fmt::format(fg(yellow), "       call {}", styled(it->first, fg(green)));
+                    result += std::holds_alternative<native_function>(functions[it->second])
+                                  ? fmt::format(fg(orange), " @ native\n")
+                                  : fmt::format(fg(orange), " @ {:08x}\n", std::get<addr>(functions[it->second]));
+                } else result += fmt::format(fg(yellow), "       call {}\n", styled(index, fg(white)));
             } break;
-            case opcode::jmp: {
-                auto a = print_and_read_addr(orange);
-                result += fmt::format("       {} {}\n", styled("jmp", fg(yellow)), styled(a, fg(orange)));
+
+            case opcode::jmp8:
+            case opcode::jmp16:
+            case opcode::jmp32:
+            case opcode::jmp64: {
+                auto a = print_and_read_addr(orange, op);
+                repeat (8 - address_operand_size(op)) result += "   ";
+                result += fmt::format("       {} {:08x}\n", styled("jmp", fg(yellow)), styled(a, fg(orange)));
             } break;
-            case opcode::jnz: {
+
+            case opcode::jnz8:
+            case opcode::jnz16:
+            case opcode::jnz32:
+            case opcode::jnz64: {
                 auto r = bytecode[i++];
                 result += fmt::format(fg(red), "{:02x} ", r);
-                auto a = print_and_read_addr(orange);
-                result += fmt::format("    {} {}{} {}\n", styled("jnz", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
+                auto a = print_and_read_addr(orange, op);
+                repeat (8 - address_operand_size(op)) result += "   ";
+                result += fmt::format("    {} {}{} {:08x}\n", styled("jnz", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
             } break;
         }
     }

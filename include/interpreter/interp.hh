@@ -97,17 +97,26 @@ enum struct opcode : opcode_t {
     shr,
 
     /// Function call.
-    /// Operands: index (word).
+    /// Operands: index.
     /// The index is the index of the function in the function table.
-    call,
+    call8,
+    call16,
+    call32,
+    call64,
 
     /// Jump to an address.
     /// Operands: address (word)
-    jmp,
+    jmp8,
+    jmp16,
+    jmp32,
+    jmp64,
 
     /// Jump to an address if a register is nonzero.
     /// Operands: condition (register), address (word)
-    jnz,
+    jnz8,
+    jnz16,
+    jnz32,
+    jnz64,
 
     /// For sanity checks.
     max_opcode
@@ -160,7 +169,8 @@ class interpreter : ::interp_handle_t {
     addr stack_base;
 
     /// Functions in the bytecode. NEVER reorder or remove elements from these.
-    std::vector<std::variant<std::monostate, addr, native_function>> functions;
+    using func_t = std::variant<std::monostate, addr, native_function>;
+    std::vector<func_t> functions;
     std::unordered_map<std::string, usz> functions_map;
 
     /// How many stack frames deep we are.
@@ -208,8 +218,8 @@ class interpreter : ::interp_handle_t {
     };
     arith_t decode_arithmetic();
 
-    /// Read a word at the current position of the instruction pointer.
-    word read_word_at_ip();
+    /// Read an address from the bytecode at ip.
+    word read_sized_address_at_ip(opcode op);
 
 public:
     /// Maximum stack size.
@@ -243,7 +253,6 @@ public:
     /// Run the interpreter().
     /// \return The return value of the program.
     word run();
-
 
     /// ===========================================================================
     ///  State manipulation.
