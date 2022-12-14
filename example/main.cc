@@ -17,18 +17,26 @@ int main(int argc, char** argv) {
     using namespace interp::literals;
 
     /// Loop.
-    interp.create_move(2_r, 9_w);
+    interp.create_move(3_r, 9_w);
     auto start = interp.current_addr();
+    interp.create_move(2_r, 3_r);
     interp.create_call("display");
-    interp.create_sub(2_r, 2_r, 1_w);
-    interp.create_branch_ifnz(2_r, start);
+    interp.create_call("桜 square 桜 print 桜"); /// Function names are just strings, so they can be anything.
+    interp.create_sub(3_r, 3_r, 1_w);
+    interp.create_branch_ifnz(3_r, start);
 
     /// Return 42.
     interp.create_move(1_r, 42_w);
     interp.create_return();
 
+    /// Define a function in code.
+    interp.create_function("桜 square 桜 print 桜");
+    interp.create_mulu(2_r | INTERP_SZ_32, 2_r | INTERP_SZ_32, 2_r | INTERP_SZ_32);
+    interp.create_call("display");
+    interp.create_return();
+
     /// Define a function.
-    interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.registers[2]); });
+    interp.defun("display", [](interp::interpreter& i) { fmt::print("{}\n", i.arg(0, INTERP_SZ_32)); });
 
     /// Disassemble.
     if (options::get<"-d">()) {

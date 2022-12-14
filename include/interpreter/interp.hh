@@ -22,20 +22,34 @@ struct interp_handle_t {};
 /// The interpreter namespace.
 namespace interp {
 /// Forward decls.
-struct interpreter;
+class interpreter;
 
 /// Typedefs.
 using opcode_t = u8;
 using addr = usz;
 using native_function = std::function<void(interpreter&)>;
-using reg = u8;
+enum struct reg : u8 {
+    arith_imm_32 = 0,
+    arith_imm_64 = 128,
+};
 using word = u64;
+
+/// Constants.
+constexpr static usz ip_start_addr = 1;
+
+constexpr static u8 osz_mask = 0b1100'0000;
+constexpr static u8 reg_mask = static_cast<u8>(~osz_mask);
 
 /// Literals.
 namespace literals {
 constexpr reg operator""_r(unsigned long long r) { return static_cast<reg>(r); }
 constexpr word operator""_w(unsigned long long a) { return static_cast<word>(a); }
 } // namespace literals
+
+/// Register helpers.
+constexpr reg operator|(reg r, u8 s) { return static_cast<reg>(static_cast<u8>(r) | s); }
+constexpr u8 operator+(reg r) { return static_cast<u8>(r); }
+constexpr u8 index(reg r) { return static_cast<u8>(r) & reg_mask; }
 
 /// Opcode.
 enum struct opcode : opcode_t {
@@ -124,19 +138,20 @@ struct error : std::runtime_error {
 ///  Interpreter struct.
 /// ===========================================================================
 /// This holds the interpreter state.
-/// TODO: Should be class. struct for now for testing purposes.
-struct interpreter : ::interp_handle_t {
+class interpreter : ::interp_handle_t {
     /// Instruction pointer.
     addr ip{};
 
     /// Registers.
-    std::array<word, 64> registers;
-    word& return_register = registers[0];
+    ///
+    /// The underscores are due to the fact that, sometimes, you don’t
+    /// want to use this directly, and they make you think twice about
+    /// using this.
+    std::array<word, 64> _registers_;
 
     /// Stack pointer.
     addr sp{};
 
-private:
     /// The code that we’re executing.
     std::vector<u8> bytecode;
 
@@ -151,23 +166,24 @@ private:
     /// How many stack frames deep we are.
     usz stack_frame_count{};
 
-    /// Constants.
-    constexpr static usz ip_start_addr = 1;
-    constexpr static u8 arith_imm_32 = 0;
-    constexpr static u8 arith_imm_64 = 255;
-
     /// ===========================================================================
     ///  Encoder/decoder.
     /// ===========================================================================
     /// Check if registers are valid.
     void check_regs(std::same_as<reg> auto... regs) const {
         ([this](reg r) {
-            if (r >= registers.size()) {
-                throw error("Invalid register: {}", r);
+            if (index(r) >= _registers_.size()) {
+                throw error("Invalid register: {}", index(r));
             }
         }(regs),
          ...);
     }
+
+    /// Set (part of) a register to a value.
+    void set_register(reg r, word value);
+
+    /// Read (part of) a register.
+    word read_register(reg r) const;
 
     /// Encode an arithmetic instruction.
     ///
@@ -179,11 +195,10 @@ private:
     /// then the next 4 (or 8) bytes are an immediate value that is to
     /// be used instead.
     ///
-    /// Both source registers cannot be 0 or 255.
+    /// Both source registers cannot be arith_imm_32 or arith_imm_64.
     void encode_arithmetic(opcode op, reg dest, reg r1, reg r2);
     void encode_arithmetic(opcode op, reg dest, reg src, word imm);
     void encode_arithmetic(opcode op, reg dest, word imm, reg src);
-    void encode_arithmetic(auto...) = delete;
 
     /// Decode an arithmetic instruction.
     struct arith_t {
@@ -204,13 +219,8 @@ public:
     std::string last_error;
 
     /// ===========================================================================
-    ///  Stack manipulation.
+    ///  Driver and Utils.
     /// ===========================================================================
-    /// Push a value onto the stack.
-    void push(word value);
-
-    /// Pop a value from the stack.
-    word pop();
 
     /// Construct an interpreter.
     interpreter() {
@@ -234,6 +244,23 @@ public:
     /// \return The return value of the program.
     word run();
 
+
+    /// ===========================================================================
+    ///  State manipulation.
+    /// ===========================================================================
+    /// Get the value of an argument register.
+    word arg(usz index, interp_size sz) const;
+
+    /// Push a value onto the stack.
+    void push(word value);
+
+    /// Pop a value from the stack.
+    word pop();
+
+    /// Get the value of a register.
+    word r(reg r) const;
+    void r(reg r, word value);
+
     /// ===========================================================================
     ///  Operations.
     /// ===========================================================================
@@ -243,14 +270,12 @@ public:
     /// Create a move instruction.
     void create_move(reg dest, reg src);
     void create_move(reg dest, word imm);
-    void create_move(auto...) = delete;
 
     /// Arithmetic instructions
 #define ARITH(name, ...)                                   \
     void CAT(create_, name)(reg dest, reg src1, reg src2); \
     void CAT(create_, name)(reg dest, reg src, word imm);  \
-    void CAT(create_, name)(reg dest, word imm, reg src);  \
-    void CAT(create_, name)(auto...) = delete;
+    void CAT(create_, name)(reg dest, word imm, reg src);
     INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
 #undef ARITH
 
@@ -259,11 +284,12 @@ public:
 
     /// Create a direct branch.
     void create_branch(addr target);
-    void create_branch(auto...) = delete;
 
     /// Create a conditional branch that branches if the top of the stack is nonzero.
     void create_branch_ifnz(reg condition, addr target);
-    void create_branch_ifnz(auto...) = delete;
+
+    /// Create a function that can be called.
+    void create_function(const std::string& name);
 
     /// Get the current address.
     addr current_addr() const;

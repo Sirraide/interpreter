@@ -22,6 +22,14 @@ typedef i64 interp_int;
 /// Address type.
 typedef u64 interp_address;
 
+/// Size flags.
+typedef enum interp_size {
+    INTERP_SZ_64 = 0,
+    INTERP_SZ_32 = 0b10000000,
+    INTERP_SZ_16 = 0b01000000,
+    INTERP_SZ_8 = 0b11000000,
+} interp_size;
+
 /// ===========================================================================
 ///  Interpreter creation and destruction.
 /// ===========================================================================

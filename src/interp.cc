@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <interpreter/interp.hh>
 #include <ranges>
+#include <utility>
 
 #define L(x) \
     x:
@@ -29,16 +30,34 @@ void interp::interpreter::defun(const std::string& name, interp::native_function
     }
 }
 
-/// Push a value onto the stack.
+interp::word interp::interpreter::arg(usz index, interp_size sz) const {
+    /// r2 is the first argument register.
+    index += 2;
+
+    /// Check that the register is valid.
+    if (index < 2 or index >= _registers_.size())
+        throw error("Argument index {} is out of bounds.", index);
+
+    /// Return the value.
+    return read_register(static_cast<reg>(index) | sz);
+}
+
 void interp::interpreter::push(word value) {
     if (sp == max_stack_size) throw error("Stack overflow.");
     stack[sp++] = value;
 }
 
-/// Pop a value from the stack.
 auto interp::interpreter::pop() -> word {
     if (sp == 0) throw error("Stack underflow.");
     return stack[--sp];
+}
+
+interp::word interp::interpreter::r(reg r) const {
+    return read_register(r);
+}
+
+void interp::interpreter::r(reg r, word value) {
+    set_register(r, value);
 }
 
 /// ===========================================================================
@@ -60,33 +79,37 @@ static void write_addr(std::vector<u8>& bytecode, interp::word imm) {
     std::memcpy(bytecode.data() + bytecode.size() - 8, &imm, 8);
 }
 
+static bool is_imm(interp::reg r) {
+    return r == interp::reg::arith_imm_32 or r == interp::reg::arith_imm_64;
+}
+
 void interp::interpreter::encode_arithmetic(opcode op, reg rdest, reg r1, reg r2) {
     /// These are invalid here.
-    if (r1 == 0 or r2 == 0 or r1 == 255 or r2 == 255)
-        throw error("This overload of encode_arithmetic() cannot be used with source registers 0 or 255.");
+    if (is_imm(r1) or is_imm(r2))
+        throw error("This overload of encode_arithmetic() cannot be used with source registers 0 or arith_imm_64.");
 
     /// Make sure the registers are valid.
     check_regs(rdest, r1, r2);
 
     /// Encode the instruction.
     bytecode.push_back(static_cast<opcode_t>(op));
-    bytecode.push_back(rdest);
-    bytecode.push_back(r1);
-    bytecode.push_back(r2);
+    bytecode.push_back(+rdest);
+    bytecode.push_back(+r1);
+    bytecode.push_back(+r2);
 }
 
 void interp::interpreter::encode_arithmetic(opcode op, reg dest, reg src, word imm) {
     /// Invalid here.
-    if (src == 0 or src == 255) throw error("Source register may not be 0 or 255.");
+    if (is_imm(src)) throw error("Source register may not be 0 or reg::arith_imm_64.");
 
     /// Make sure the registers are valid.
     check_regs(dest, src);
 
     /// Encode the instruction.
     bytecode.push_back(static_cast<opcode_t>(op));
-    bytecode.push_back(dest);
-    bytecode.push_back(src);
-    bytecode.push_back(imm > UINT32_MAX ? arith_imm_64 : arith_imm_32);
+    bytecode.push_back(+dest);
+    bytecode.push_back(+src);
+    bytecode.push_back(imm > UINT32_MAX ? +reg::arith_imm_64 : +reg::arith_imm_32);
 
     /// Encode the immediate.
     write_imm(bytecode, imm);
@@ -94,16 +117,16 @@ void interp::interpreter::encode_arithmetic(opcode op, reg dest, reg src, word i
 
 void interp::interpreter::encode_arithmetic(opcode op, reg dest, word imm, reg src) {
     /// Invalid here.
-    if (src == 0 or src == 255) throw error("Source register may not be 0 or 255.");
+    if (is_imm(src)) throw error("Source register may not be 0 or reg::arith_imm_64.");
 
     /// Make sure the registers are valid.
     check_regs(dest, src);
 
     /// Encode the instruction.
     bytecode.push_back(static_cast<opcode_t>(op));
-    bytecode.push_back(dest);
-    bytecode.push_back(imm > UINT32_MAX ? arith_imm_64 : arith_imm_32);
-    bytecode.push_back(src);
+    bytecode.push_back(+dest);
+    bytecode.push_back(imm > UINT32_MAX ? +reg::arith_imm_64 : +reg::arith_imm_32);
+    bytecode.push_back(+src);
 
     /// Encode the immediate.
     write_imm(bytecode, imm);
@@ -116,14 +139,14 @@ interp::interpreter::arith_t interp::interpreter::decode_arithmetic() {
     auto reg_src2 = bytecode[ip++];
 
     /// Sanity check.
-    if ((reg_src1 == arith_imm_32 or reg_src2 == arith_imm_64) and //
-        (reg_src1 == arith_imm_64 or reg_src2 == arith_imm_32))
+    if ((reg_src1 == +reg::arith_imm_32 or reg_src2 == +reg::arith_imm_64) and //
+        (reg_src1 == +reg::arith_imm_64 or reg_src2 == +reg::arith_imm_32))
         throw error("Invalid arithmetic instruction.");
 
     /// Either src1 or src2 may be a 32/64 bit immediate.
-    const auto decode_value = [&](reg reg_src) -> word {
+    const auto decode_value = [&](u8 reg_src) -> word {
         /// 32 bit immediate.
-        if (reg_src == arith_imm_32) {
+        if (reg_src == +reg::arith_imm_32) {
             word imm{};
             std::memcpy(&imm, bytecode.data() + ip, 4);
             ip += 4;
@@ -131,7 +154,7 @@ interp::interpreter::arith_t interp::interpreter::decode_arithmetic() {
         }
 
         /// 64 bit immediate.
-        if (reg_src == arith_imm_64) {
+        if (reg_src == +reg::arith_imm_64) {
             word imm{};
             std::memcpy(&imm, bytecode.data() + ip, 8);
             ip += 8;
@@ -139,7 +162,7 @@ interp::interpreter::arith_t interp::interpreter::decode_arithmetic() {
         }
 
         /// Register.
-        return registers[reg_src];
+        return read_register(static_cast<reg>(reg_src));
     };
 
     /// Extract the source values.
@@ -147,7 +170,7 @@ interp::interpreter::arith_t interp::interpreter::decode_arithmetic() {
     word src2 = decode_value(reg_src2);
 
     /// Return the instruction.
-    return {dest, src1, src2};
+    return {static_cast<reg>(dest), src1, src2};
 }
 
 interp::word interp::interpreter::read_word_at_ip() {
@@ -155,6 +178,26 @@ interp::word interp::interpreter::read_word_at_ip() {
     std::memcpy(&value, bytecode.data() + ip, 8);
     ip += 8;
     return value;
+}
+
+void interp::interpreter::set_register(reg r, word value) {
+    switch (+r & osz_mask) {
+        case INTERP_SZ_8: *reinterpret_cast<u8*>(&_registers_[index(r)]) = static_cast<u8>(value); break;
+        case INTERP_SZ_16: *reinterpret_cast<u16*>(&_registers_[index(r)]) = static_cast<u16>(value); break;
+        case INTERP_SZ_32: *reinterpret_cast<u32*>(&_registers_[index(r)]) = static_cast<u32>(value); break;
+        case INTERP_SZ_64: _registers_[index(r)] = value; break;
+        default: std::unreachable();
+    }
+}
+
+interp::word interp::interpreter::read_register(reg r) const {
+    switch (+r & osz_mask) {
+        case INTERP_SZ_8: return *reinterpret_cast<const u8*>(&_registers_[index(r)]);
+        case INTERP_SZ_16: return *reinterpret_cast<const u16*>(&_registers_[index(r)]);
+        case INTERP_SZ_32: return *reinterpret_cast<const u32*>(&_registers_[index(r)]);
+        case INTERP_SZ_64: return _registers_[index(r)];
+        default: std::unreachable();
+    }
 }
 
 /// ===========================================================================
@@ -168,8 +211,8 @@ void interp::interpreter::create_move(reg dest, reg src) {
 
     /// Encode the instruction.
     bytecode.push_back(static_cast<opcode_t>(opcode::mov));
-    bytecode.push_back(dest);
-    bytecode.push_back(src);
+    bytecode.push_back(+dest);
+    bytecode.push_back(+src);
 }
 
 void interp::interpreter::create_move(reg dest, word imm) {
@@ -178,18 +221,18 @@ void interp::interpreter::create_move(reg dest, word imm) {
 
     /// Encode the instruction.
     bytecode.push_back(static_cast<opcode_t>(opcode::mov));
-    bytecode.push_back(dest);
-    bytecode.push_back(imm > UINT32_MAX ? arith_imm_64 : arith_imm_32);
+    bytecode.push_back(+dest);
+    bytecode.push_back(imm > UINT32_MAX ? +reg::arith_imm_64 : +reg::arith_imm_32);
 
     /// Encode the immediate.
     write_imm(bytecode, imm);
 }
 
-#define ARITH(name, ...)                                                            \
+#define ARITH(name, ...)                                                                    \
     void interp::interpreter::CAT(create_, name)(reg dest, reg src1, reg src2) /**/ \
-    { encode_arithmetic(opcode::name, dest, src1, src2); }                          \
+    { encode_arithmetic(opcode::name, dest, src1, src2); }                              \
     void interp::interpreter::CAT(create_, name)(reg dest, reg src, word imm) /**/  \
-    { encode_arithmetic(opcode::name, dest, src, imm); }                            \
+    { encode_arithmetic(opcode::name, dest, src, imm); }                                \
     void interp::interpreter::CAT(create_, name)(reg dest, word imm, reg src) /**/  \
     { encode_arithmetic(opcode::name, dest, imm, src); }
 INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
@@ -231,8 +274,22 @@ void interp::interpreter::create_branch(addr target) {
 void interp::interpreter::create_branch_ifnz(reg cond, addr target) {
     /// Push the opcode, condition and target.
     bytecode.push_back(static_cast<opcode_t>(opcode::jnz));
-    bytecode.push_back(cond);
+    bytecode.push_back(+cond);
     write_addr(bytecode, target);
+}
+
+void interp::interpreter::create_function(const std::string& name) {
+    /// Make sure the function doesn’t already exist.
+    if (auto it = functions_map.find(name); it != functions_map.end()) {
+        if (not std::holds_alternative<std::monostate>(functions[it->second])) throw error("Function already exists.");
+        functions[it->second] = addr{bytecode.size()};
+    }
+
+    /// Add the function.
+    else {
+        functions_map[name] = functions.size();
+        functions.emplace_back(addr{bytecode.size()});
+    }
 }
 
 auto interp::interpreter::current_addr() const -> addr { return bytecode.size(); }
@@ -248,7 +305,7 @@ interp::word interp::interpreter::run() {
     sp = 0;
 
     /// Initialise registers.
-    for (auto& reg : registers) reg = 0;
+    for (auto& reg : _registers_) reg = 0;
 
     /// Run the code.
     for (;;) {
@@ -262,7 +319,7 @@ interp::word interp::interpreter::run() {
 
             /// Return from a function.
             case opcode::ret: {
-                if (stack_base == 0) return return_register;
+                if (stack_base == 0) return _registers_[1];
 
                 /// Pop the stack frame.
                 sp = stack_base;
@@ -276,81 +333,81 @@ interp::word interp::interpreter::run() {
                 auto src = static_cast<reg>(bytecode[ip++]);
 
                 /// Immediate.
-                if (src == arith_imm_32 || src == arith_imm_64) {
+                if (src == reg::arith_imm_32 || src == reg::arith_imm_64) {
                     word imm{};
-                    std::memcpy(&imm, bytecode.data() + ip, src == arith_imm_32 ? 4 : 8);
-                    ip += src == arith_imm_32 ? 4 : 8;
-                    registers[dest] = imm;
+                    std::memcpy(&imm, bytecode.data() + ip, src == reg::arith_imm_32 ? 4 : 8);
+                    ip += src == reg::arith_imm_32 ? 4 : 8;
+                    set_register(dest, imm);
                 }
 
                 /// Register.
-                else { registers[dest] = registers[src]; }
+                else { set_register(dest, read_register(src)); }
             } break;
 
             /// Add two integers.
             case opcode::add: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = src1 + src2;
+                set_register(dest, src1 + src2);
             } break;
 
             /// Subtract two integers.
             case opcode::sub: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = src1 - src2;
+                set_register(dest, src1 - src2);
             } break;
 
             /// Multiply two integers (signed).
             case opcode::muli: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = word(i64(src1) * i64(src2));
+                set_register(dest, word(i64(src1) * i64(src2)));
             } break;
 
             /// Multiply two integers (unsigned).
             case opcode::mulu: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = src1 * src2;
+                set_register(dest, src1 * src2);
             } break;
 
             /// Divide two integers (signed).
             case opcode::divi: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = word(i64(src1) / i64(src2));
+                set_register(dest, word(i64(src1) / i64(src2)));
             } break;
 
             /// Divide two integers (unsigned).
             case opcode::divu: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = src1 / src2;
+                set_register(dest, src1 / src2);
             } break;
 
             /// Remainder of two integers (signed).
             case opcode::remi: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = word(i64(src1) % i64(src2));
+                set_register(dest, word(i64(src1) % i64(src2)));
             } break;
 
             /// Remainder of two integers (unsigned).
             case opcode::remu: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = src1 % src2;
+                set_register(dest, src1 % src2);
             } break;
 
             /// Shift left.
             case opcode::shl: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = src1 << (src2 & 63);
+                set_register(dest, src1 << (src2 & 63));
             } break;
 
             /// Logical shift right.
             case opcode::shr: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = src1 >> (src2 & 63);
+                set_register(dest, src1 >> (src2 & 63));
             } break;
 
             /// Arithmetic shift right.
             case opcode::sar: {
                 auto [dest, src1, src2] = decode_arithmetic();
-                registers[dest] = word(i64(src1) >> (src2 & 63));
+                set_register(dest, word(i64(src1) >> (src2 & 63)));
             } break;
 
             /// Call a function.
@@ -392,10 +449,10 @@ interp::word interp::interpreter::run() {
 
             /// Jump to an address if the top of the stack is not zero.
             case opcode::jnz: {
-                reg r = bytecode[ip++];
+                reg r = static_cast<reg>(bytecode[ip++]);
                 auto target = read_word_at_ip();
                 if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds"); }
-                if (registers[r]) ip = target;
+                if (read_register(r)) ip = target;
             } break;
         }
     }
@@ -416,6 +473,19 @@ std::string interp::interpreter::disassemble() const {
     /// Declare this here since it’s used by some of the lambdas below.
     usz i = 0;
 
+    /// String representation of a register.
+    static const auto reg_str = [](u8 r) {
+        std::string_view suffix;
+        switch (r & osz_mask) {
+            case INTERP_SZ_8: suffix = "b"; break;
+            case INTERP_SZ_16: suffix = "w"; break;
+            case INTERP_SZ_32: suffix = "d"; break;
+            case INTERP_SZ_64: suffix = ""; break;
+            default: std::unreachable();
+        }
+        return fmt::format("r{}{}", index(static_cast<reg>(r)), suffix);
+    };
+
     /// Print an arithmetic instruction.
     const auto print_arith = [&](auto&& str) { // clang-format off
         /// Bytes for the opcode, dest, src1, and src2.
@@ -424,36 +494,36 @@ std::string interp::interpreter::disassemble() const {
 
         /// Check if we have an immediate operand.
         usz imm = 0;
-        if (bytecode[i + 1] == arith_imm_32 or bytecode[i + 1] == arith_imm_64) imm = 1;
-        else if (bytecode[i + 2] == arith_imm_32 or bytecode[i + 2] == arith_imm_64) imm = 2;
+        if (bytecode[i + 1] == +reg::arith_imm_32 or bytecode[i + 1] == +reg::arith_imm_64) imm = 1;
+        else if (bytecode[i + 2] == +reg::arith_imm_32 or bytecode[i + 2] == +reg::arith_imm_64) imm = 2;
 
         /// Extract the immediate value and print the first 4 bytes of the immediate if we have one.
         word imm_value{};
         if (imm) {
             std::memcpy(&imm_value, bytecode.data() + i + 3,
-                bytecode[i + imm] == arith_imm_32 ? 4 : 8);
+                bytecode[i + imm] == +reg::arith_imm_32 ? 4 : 8);
 
             r = fmt::format_to(r, "{:02x} {:02x} {:02x} {:02x} ",
                 bytecode[i + 3], bytecode[i + 4], bytecode[i + 5], bytecode[i + 6]);
-        }
+        } else repeat (4) r = fmt::format_to(r, "   ");
 
         /// Print the mnemonic.
-        r = fmt::format_to(r, "         {} r{}", str, bytecode[i]);
+        r = fmt::format_to(r, "         {} {}", str, reg_str(bytecode[i]));
         r = imm == 1
             ? fmt::format_to(r, ", {}", imm_value)
-            : fmt::format_to(r, ", r{}", bytecode[i + 1]);
+            : fmt::format_to(r, ", {}", reg_str(bytecode[i + 1]));
         r = imm == 2
             ? fmt::format_to(r, ", {}\n", imm_value)
-            : fmt::format_to(r, ", r{}\n", bytecode[i + 2]);
+            : fmt::format_to(r, ", {}\n", reg_str(bytecode[i + 2]));
 
         /// Print 4 more bytes if we have a a 64-bit immediate.
-        if (imm and bytecode[i + imm] == arith_imm_64)
+        if (imm and bytecode[i + imm] == +reg::arith_imm_64)
             fmt::format_to(r, "[{:08x}]: {:02x} {:02x} {:02x} {:02x}\n",
                 i + 7, bytecode[i + 7], bytecode[i + 8], bytecode[i + 9], bytecode[i + 10]);
 
        /// Yeet the instruction.
        i += 3;
-       if (imm) i += bytecode[i + imm] == arith_imm_32 ? 4zu : 8zu;
+       if (imm) i += bytecode[i + imm] == +reg::arith_imm_32 ? 4zu : 8zu;
     }; // clang-format on
 
     /// Print an address and return it.
@@ -498,32 +568,32 @@ std::string interp::interpreter::disassemble() const {
                     bytecode[i], bytecode[i + 1]);
 
                 /// Check if we have an immediate operand.
-                bool imm = bytecode[i + 1] == arith_imm_32 or bytecode[i + 1] == arith_imm_64;
+                bool imm = bytecode[i + 1] == +reg::arith_imm_32 or bytecode[i + 1] == +reg::arith_imm_64;
 
                 /// Extract the immediate value and print the first 4 bytes of the immediate if we have one.
                 word imm_value{};
                 if (imm) {
                     std::memcpy(&imm_value, bytecode.data() + i + 2,
-                        bytecode[i + imm] == arith_imm_32 ? 4 : 8);
+                        bytecode[i + imm] == +reg::arith_imm_32 ? 4 : 8);
 
                     r = fmt::format_to(r, "{:02x} {:02x} {:02x} {:02x} ",
                         bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], bytecode[i + 5]);
-                }
+                } else repeat (4) r = fmt::format_to(r, "   ");
 
                 /// Print the mnemonic.
-                r = fmt::format_to(r, "            mov r{}", bytecode[i]);
+                r = fmt::format_to(r, "            mov {}", reg_str(bytecode[i]));
                 r = imm
                     ? fmt::format_to(r, ", {}\n", imm_value)
-                    : fmt::format_to(r, ", r{}\n", bytecode[i + 1]);
+                    : fmt::format_to(r, ", {}\n", reg_str(bytecode[i + 1]));
 
                 /// Print 4 more bytes if we have a a 64-bit immediate.
-                if (imm and bytecode[i + 1] == arith_imm_64)
+                if (imm and bytecode[i + 1] == +reg::arith_imm_64)
                     fmt::format_to(r, "[{:08x}]: {:02x} {:02x} {:02x} {:02x}\n",
                         i + 6, bytecode[i + 6], bytecode[i + 7], bytecode[i + 8], bytecode[i + 9]);
 
                 /// Yeet the instruction.
                 i += 2;
-                if (imm) i += bytecode[i + 1] == arith_imm_32 ? 4zu : 8zu;
+                if (imm) i += bytecode[i + 1] == +reg::arith_imm_32 ? 4zu : 8zu;
             } break; // clang-format on
 
             case opcode::add: print_arith("add"); break;
@@ -553,7 +623,7 @@ std::string interp::interpreter::disassemble() const {
                 auto r = bytecode[i++];
                 result += fmt::format("{:02x} ", r);
                 auto a = print_and_read_addr();
-                result += fmt::format("    jnz r{}, {}\n", r, a);
+                result += fmt::format("    jnz {}, {}\n", reg_str(r), a);
             } break;
         }
     }
