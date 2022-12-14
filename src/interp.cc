@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <fmt/color.h>
 #include <interpreter/interp.hh>
 #include <ranges>
 #include <utility>
@@ -228,11 +229,11 @@ void interp::interpreter::create_move(reg dest, word imm) {
     write_imm(bytecode, imm);
 }
 
-#define ARITH(name, ...)                                                                    \
+#define ARITH(name, ...)                                                            \
     void interp::interpreter::CAT(create_, name)(reg dest, reg src1, reg src2) /**/ \
-    { encode_arithmetic(opcode::name, dest, src1, src2); }                              \
+    { encode_arithmetic(opcode::name, dest, src1, src2); }                          \
     void interp::interpreter::CAT(create_, name)(reg dest, reg src, word imm) /**/  \
-    { encode_arithmetic(opcode::name, dest, src, imm); }                                \
+    { encode_arithmetic(opcode::name, dest, src, imm); }                            \
     void interp::interpreter::CAT(create_, name)(reg dest, word imm, reg src) /**/  \
     { encode_arithmetic(opcode::name, dest, imm, src); }
 INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
@@ -473,8 +474,15 @@ std::string interp::interpreter::disassemble() const {
     /// Declare this here since it’s used by some of the lambdas below.
     usz i = 0;
 
+    /// For colours.
+    using enum fmt::terminal_color;
+    using fmt::fg;
+    using fmt::styled;
+    static constexpr auto orange = static_cast<fmt::color>(0xF59762);
+    static constexpr auto comma = styled(",", fg(white));
+
     /// String representation of a register.
-    static const auto reg_str = [](u8 r) {
+    const auto reg_str = [](u8 r) {
         std::string_view suffix;
         switch (r & osz_mask) {
             case INTERP_SZ_8: suffix = "b"; break;
@@ -483,14 +491,21 @@ std::string interp::interpreter::disassemble() const {
             case INTERP_SZ_64: suffix = ""; break;
             default: std::unreachable();
         }
-        return fmt::format("r{}{}", index(static_cast<reg>(r)), suffix);
+        return fmt::format(fg(red), "r{}{}", index(static_cast<reg>(r)), suffix);
+    };
+
+    /// Print a register byte. As weird as `const u8&` looks, it’s necessary
+    /// because the type returned by `styled()` stores a const& to the thing
+    /// being styled.
+    const auto rbyte = [](const u8& r) {
+        return is_imm(static_cast<reg>(r)) ? styled(r, fg(white)) : styled(r, fg(red));
     };
 
     /// Print an arithmetic instruction.
     const auto print_arith = [&](auto&& str) { // clang-format off
-        /// Bytes for the opcode, dest, src1, and src2.
+        /// Bytes for the dest, src1, and src2.
         auto r = fmt::format_to(std::back_inserter(result), "{:02x} {:02x} {:02x} ",
-            bytecode[i], bytecode[i + 1], bytecode[i + 2]);
+            rbyte(bytecode[i]), rbyte(bytecode[i + 1]), rbyte(bytecode[i + 2]));
 
         /// Check if we have an immediate operand.
         usz imm = 0;
@@ -503,23 +518,25 @@ std::string interp::interpreter::disassemble() const {
             std::memcpy(&imm_value, bytecode.data() + i + 3,
                 bytecode[i + imm] == +reg::arith_imm_32 ? 4 : 8);
 
-            r = fmt::format_to(r, "{:02x} {:02x} {:02x} {:02x} ",
+            r = fmt::format_to(r, fg(magenta), "{:02x} {:02x} {:02x} {:02x} ",
                 bytecode[i + 3], bytecode[i + 4], bytecode[i + 5], bytecode[i + 6]);
         } else repeat (4) r = fmt::format_to(r, "   ");
 
         /// Print the mnemonic.
-        r = fmt::format_to(r, "         {} {}", str, reg_str(bytecode[i]));
+        r = fmt::format_to(r, "         {} {}", styled(str, fg(yellow)), reg_str(bytecode[i]));
         r = imm == 1
-            ? fmt::format_to(r, ", {}", imm_value)
-            : fmt::format_to(r, ", {}", reg_str(bytecode[i + 1]));
+            ? fmt::format_to(r, "{} {}", comma, styled(imm_value, fg(magenta)))
+            : fmt::format_to(r, "{} {}", comma, reg_str(bytecode[i + 1]));
         r = imm == 2
-            ? fmt::format_to(r, ", {}\n", imm_value)
-            : fmt::format_to(r, ", {}\n", reg_str(bytecode[i + 2]));
+            ? fmt::format_to(r, "{} {}\n", comma, styled(imm_value, fg(magenta)))
+            : fmt::format_to(r, "{} {}\n", comma, reg_str(bytecode[i + 2]));
 
         /// Print 4 more bytes if we have a a 64-bit immediate.
-        if (imm and bytecode[i + imm] == +reg::arith_imm_64)
-            fmt::format_to(r, "[{:08x}]: {:02x} {:02x} {:02x} {:02x}\n",
-                i + 7, bytecode[i + 7], bytecode[i + 8], bytecode[i + 9], bytecode[i + 10]);
+        if (imm and bytecode[i + imm] == +reg::arith_imm_64) {
+            r = fmt::format_to(r, fg(orange), "[{:08x}]: ", i + 7);
+            fmt::format_to(r, fg(magenta), "{:02x} {:02x} {:02x} {:02x}\n",
+                bytecode[i + 7], bytecode[i + 8], bytecode[i + 9], bytecode[i + 10]);
+        }
 
        /// Yeet the instruction.
        i += 3;
@@ -527,9 +544,9 @@ std::string interp::interpreter::disassemble() const {
     }; // clang-format on
 
     /// Print an address and return it.
-    const auto print_and_read_addr = [&]() {
+    const auto print_and_read_addr = [&](auto c) {
         /// Print the bytes that make up the index.
-        result += fmt::format("{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",                       //
+        result += fmt::format(fg(c), "{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",                //
                               bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], //
                               bytecode[i + 5], bytecode[i + 6], bytecode[i + 7]);
 
@@ -543,29 +560,32 @@ std::string interp::interpreter::disassemble() const {
     /// Iterate over the bytecode and disassemble each instruction.
     while (i < bytecode.size()) {
         /// Print address.
-        result += fmt::format("[{:08x}]: {:02x} ", i, bytecode[i]);
+        result += fmt::format(fg(orange), "[{:08x}]: ", i);
+        if (i == 0) result += fmt::format(fg(white), "00 ", bytecode[i]);
+        else if (bytecode[i] == 0) result += fmt::format(fg(bright_white), "{:02x} ", bytecode[i]);
+        else result += fmt::format(fg(yellow), "{:02x} ", bytecode[i]);
 
         /// Print the instruction mnemonic.
         switch (auto op = static_cast<opcode>(bytecode[i++])) {
             static_assert(opcode_t(opcode::max_opcode) == 18);
             default:
                 repeat (8) result += "   ";
-                if (i == 1 and op == opcode::invalid) result += "      .sentinel\n";
-                else result += "      ???\n";
+                if (i == 1 and op == opcode::invalid) result += fmt::format(fg(white), "      .sentinel\n");
+                else result += fmt::format(fg(bright_white), "      ???\n");
                 break;
             case opcode::nop:
                 repeat (8) result += "   ";
-                result += "      nop\n";
+                result += fmt::format(fg(yellow), "      nop\n");
                 break;
             case opcode::ret:
                 repeat (8) result += "   ";
-                result += "      ret\n";
+                result += fmt::format(fg(yellow), "      ret\n");
                 break;
 
             case opcode::mov: { // clang-format off
-                /// Bytes for the opcode, dest, src1, and src2.
+                /// Bytes for the opcode and dest
                 auto r = fmt::format_to(std::back_inserter(result), "{:02x} {:02x} ",
-                    bytecode[i], bytecode[i + 1]);
+                    rbyte(bytecode[i]), rbyte(bytecode[i + 1]));
 
                 /// Check if we have an immediate operand.
                 bool imm = bytecode[i + 1] == +reg::arith_imm_32 or bytecode[i + 1] == +reg::arith_imm_64;
@@ -576,20 +596,22 @@ std::string interp::interpreter::disassemble() const {
                     std::memcpy(&imm_value, bytecode.data() + i + 2,
                         bytecode[i + imm] == +reg::arith_imm_32 ? 4 : 8);
 
-                    r = fmt::format_to(r, "{:02x} {:02x} {:02x} {:02x} ",
+                    r = fmt::format_to(r, fg(magenta), "{:02x} {:02x} {:02x} {:02x} ",
                         bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], bytecode[i + 5]);
                 } else repeat (4) r = fmt::format_to(r, "   ");
 
                 /// Print the mnemonic.
-                r = fmt::format_to(r, "            mov {}", reg_str(bytecode[i]));
+                r = fmt::format_to(r, "            {} {}", styled("mov", fg(yellow)), reg_str(bytecode[i]));
                 r = imm
-                    ? fmt::format_to(r, ", {}\n", imm_value)
-                    : fmt::format_to(r, ", {}\n", reg_str(bytecode[i + 1]));
+                    ? fmt::format_to(r, "{} {}\n", comma, styled(imm_value, fg(magenta)))
+                    : fmt::format_to(r, "{} {}\n", comma, reg_str(bytecode[i + 1]));
 
                 /// Print 4 more bytes if we have a a 64-bit immediate.
-                if (imm and bytecode[i + 1] == +reg::arith_imm_64)
-                    fmt::format_to(r, "[{:08x}]: {:02x} {:02x} {:02x} {:02x}\n",
-                        i + 6, bytecode[i + 6], bytecode[i + 7], bytecode[i + 8], bytecode[i + 9]);
+                if (imm and bytecode[i + 1] == +reg::arith_imm_64){
+                    r = fmt::format_to(r, fg(orange), "[{:08x}]: ", i + 6);
+                    fmt::format_to(r, fg(magenta), "{:02x} {:02x} {:02x} {:02x}\n",
+                        bytecode[i + 6], bytecode[i + 7], bytecode[i + 8], bytecode[i + 9]);
+                }
 
                 /// Yeet the instruction.
                 i += 2;
@@ -608,22 +630,28 @@ std::string interp::interpreter::disassemble() const {
             case opcode::sar: print_arith("sar"); break;
             case opcode::shr: print_arith("shr"); break;
             case opcode::call: {
-                auto index = print_and_read_addr();
+                auto index = print_and_read_addr(green);
 
                 /// Try and resolve the function name.
                 auto it = ranges::find_if(functions_map, [&](auto&& f) { return f.second == index; });
-                if (it != functions_map.end()) result += fmt::format("       call {} (index: {})\n", it->first, index);
-                else result += fmt::format("      call {}\n", index);
+                if (it != functions_map.end()) {
+                    result += fmt::format(fg(yellow), "       call ");
+                    result += it->second >= functions.size() // clang-format off
+                              or functions[it->second].valueless_by_exception()
+                              or std::holds_alternative<std::monostate>(functions[it->second])
+                                  ? fmt::format(fg(white), "{}\n", it->first)
+                                  : fmt::format(fg(green), "{}\n", it->first); // clang-format on
+                } else result += fmt::format("      {} {}\n", styled("call", fg(yellow)), styled(index, fg(green)));
             } break;
             case opcode::jmp: {
-                auto a = print_and_read_addr();
-                result += fmt::format("       jmp {}\n", a);
+                auto a = print_and_read_addr(orange);
+                result += fmt::format("       {} {}\n", styled("jmp", fg(yellow)), styled(a, fg(orange)));
             } break;
             case opcode::jnz: {
                 auto r = bytecode[i++];
-                result += fmt::format("{:02x} ", r);
-                auto a = print_and_read_addr();
-                result += fmt::format("    jnz {}, {}\n", reg_str(r), a);
+                result += fmt::format(fg(red), "{:02x} ", r);
+                auto a = print_and_read_addr(orange);
+                result += fmt::format("    {} {}{} {}\n", styled("jnz", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
             } break;
         }
     }
