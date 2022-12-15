@@ -6,6 +6,8 @@
 
 #ifndef _WIN32
 #    include <dlfcn.h>
+#else
+#    include <windows.h>
 #endif
 
 #define L(x) \
@@ -24,7 +26,13 @@ interp::interpreter::interpreter() {
 
 interp::interpreter::~interpreter() noexcept {
     /// Unload all libraries.
-    for (auto& [_, lib] : libraries) dlclose(lib.handle);
+    for (auto& [_, lib] : libraries) {
+#ifndef _WIN32
+        dlclose(lib.handle);
+#else
+        FreeLibrary((HMODULE) lib.handle);
+#endif
+    }
 }
 
 void interp::interpreter::defun(const std::string& name, interp::native_function func) {
@@ -260,8 +268,13 @@ void interp::interpreter::library_call_unsafe(const std::string& library_path, c
     if (auto it = libraries.find(library_path); it != libraries.end()) {
         lib = &it->second;
     } else {
+#ifndef _WIN32
         void* handle = dlopen(library_path.c_str(), RTLD_LAZY);
         if (not handle) throw error("Failed to load library {}: {}", library_path, dlerror());
+#else
+        void* handle = (void*) LoadLibraryA(library_path.c_str());
+        if (not handle) throw error("Failed to load library {}: {}", library_path, GetLastError());
+#endif
         libraries[library_path] = {};
         lib = &libraries[library_path];
         lib->handle = handle;
@@ -274,8 +287,13 @@ void interp::interpreter::library_call_unsafe(const std::string& library_path, c
     }
 
     /// Otherwise, search for the function.
+#ifndef _WIN32
     auto sym = dlsym(lib->handle, function_name.c_str());
     if (not sym) throw error("Failed to load function \"{}\" from library {}: {}", function_name, library_path, dlerror());
+#else
+    auto sym = (void*) GetProcAddress((HMODULE) lib->handle, function_name.c_str());
+    if (not sym) throw error("Failed to load function \"{}\" from library {}: {}", function_name, library_path, GetLastError());
+#endif
 
     /// Create the function.
     functions.emplace_back(library_function{sym, num_params, function_name});
