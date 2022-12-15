@@ -290,6 +290,9 @@ public:
     word r(reg r) const;
     void r(reg r, word value);
 
+    /// Set the return value.
+    void set_return_value(word value);
+
     /// ===========================================================================
     ///  Linker.
     /// ===========================================================================

@@ -83,6 +83,10 @@ void interp::interpreter::r(reg r, word value) {
     set_register(r, value);
 }
 
+void interp::interpreter::set_return_value(word value) {
+    _registers_[1] = value;
+}
+
 constexpr static usz address_operand_size(interp::opcode op) {
     switch (op) {
         case interp::opcode::call8:
