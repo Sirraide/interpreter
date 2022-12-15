@@ -4,6 +4,10 @@
 #include <ranges>
 #include <utility>
 
+#ifndef _WIN32
+#    include <dlfcn.h>
+#endif
+
 #define L(x) \
     x:
 
@@ -13,6 +17,16 @@ namespace views = std::views;
 /// ===========================================================================
 ///  Miscellaneous.
 /// ===========================================================================
+interp::interpreter::interpreter() {
+    /// Push an invalid instruction to make sure jumps to 0 throw.
+    bytecode.push_back(static_cast<opcode_t>(opcode::invalid));
+}
+
+interp::interpreter::~interpreter() noexcept {
+    /// Unload all libraries.
+    for (auto& [_, lib] : libraries) dlclose(lib.handle);
+}
+
 void interp::interpreter::defun(const std::string& name, interp::native_function func) {
     /// Function is already declared.
     if (auto it = functions_map.find(name); it != functions_map.end()) {
@@ -236,6 +250,44 @@ interp::word interp::interpreter::read_register(reg r) const {
 }
 
 /// ===========================================================================
+///  Linker.
+/// ===========================================================================
+/// TODO: Write a tool that uses libtooling to generate
+///       signatures and allow for type-safe-ish calls?
+void interp::interpreter::library_call_unsafe(const std::string& library_path, const std::string& function_name, usz num_params) {
+    /// Load the library.
+    library* lib;
+    if (auto it = libraries.find(library_path); it != libraries.end()) {
+        lib = &it->second;
+    } else {
+        void* handle = dlopen(library_path.c_str(), RTLD_LAZY);
+        if (not handle) throw error("Failed to load library {}: {}", library_path, dlerror());
+        libraries[library_path] = {};
+        lib = &libraries[library_path];
+        lib->handle = handle;
+    }
+
+    /// If the function has already been added, just call it.
+    if (auto f = lib->functions.find(function_name); f != lib->functions.end()) {
+        create_call_internal(f->second);
+        return;
+    }
+
+    /// Otherwise, search for the function.
+    auto sym = dlsym(lib->handle, function_name.c_str());
+    if (not sym) throw error("Failed to load function \"{}\" from library {}: {}", function_name, library_path, dlerror());
+
+    /// Create the function.
+    functions.emplace_back(library_function{sym, num_params, function_name});
+
+    /// Add the function to the library.
+    lib->functions[function_name] = functions.size() - 1;
+
+    /// Create the call.
+    create_call_internal(functions.size() - 1);
+}
+
+/// ===========================================================================
 ///  Operations.
 /// ===========================================================================
 void interp::interpreter::create_return() { bytecode.push_back(static_cast<opcode_t>(opcode::ret)); }
@@ -273,38 +325,30 @@ void interp::interpreter::create_move(reg dest, word imm) {
 INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
 #undef ARITH
 
+void interp::interpreter::create_call_internal(usz index) {
+    if (index < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call8));
+    else if (index < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call16));
+    else if (index < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call32));
+    else bytecode.push_back(static_cast<opcode_t>(opcode::call64));
+    write_addr(bytecode, index);
+}
+
 void interp::interpreter::create_call(const std::string& name) {
     /// Make sure the function exists.
-    /// TODO: Handle parameters... somehow.
-    /// TODO: Allow loading a shared library and calling a function from it. (e.g. puts).
-    /// TODO: Add a crude wrapper to automatically wrap libc etc. functions.
-    ///       (e.g. call printf w/ 2 word’s).
-    /// TODO: Alternatively, write a tool that uses libtooling to generate wrappers.
     auto it = functions_map.find(name);
 
     /// Function not found. Add an empty record.
     if (it == functions_map.end()) {
         /// Push the opcode and call index.
-        if (functions.size() < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call8));
-        else if (functions.size() < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call16));
-        else if (functions.size() < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call32));
-        else bytecode.push_back(static_cast<opcode_t>(opcode::call64));
-        write_addr(bytecode, functions.size());
+        create_call_internal(functions.size());
 
         /// Add the record.
         functions_map[name] = functions.size();
         functions.emplace_back(std::monostate{});
     }
 
-    /// Function found.
-    else {
-        /// Push the opcode and call index.
-        if (it->second < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call8));
-        else if (it->second < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call16));
-        else if (it->second < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call32));
-        else bytecode.push_back(static_cast<opcode_t>(opcode::call64));
-        write_addr(bytecode, it->second);
-    }
+    /// Function found. Push the opcode and call index.
+    else { create_call_internal(it->second); }
 }
 
 void interp::interpreter::create_branch(addr target) {
@@ -480,6 +524,12 @@ interp::word interp::interpreter::run() {
                     push(stack_base);
                     stack_base = sp;
                     ip = std::get<addr>(func);
+                }
+
+                /// If it’s a library function, we need to do some black magic.
+                else if (std::holds_alternative<library_function>(func)) {
+                    auto& lib_func = std::get<library_function>(func);
+                    do_library_call_unsafe(lib_func);
                 }
 
                 /// Unknown function.
@@ -719,6 +769,7 @@ std::string interp::interpreter::disassemble() const {
             case opcode::shl: print_arith("shl"); break;
             case opcode::sar: print_arith("sar"); break;
             case opcode::shr: print_arith("shr"); break;
+
             case opcode::call8:
             case opcode::call16:
             case opcode::call32:
@@ -728,13 +779,24 @@ std::string interp::interpreter::disassemble() const {
 
                 /// Try and resolve the function name.
                 auto it = ranges::find_if(functions_map, [&](auto&& f) { return f.second == index; });
-                if (it != functions_map.end() and it->second < functions.size()
-                    and not functions[it->second].valueless_by_exception()
-                    and not std::holds_alternative<std::monostate>(functions[it->second])) {
-                    result += fmt::format(fg(yellow), "       call {}", styled(it->first, fg(green)));
-                    result += std::holds_alternative<native_function>(functions[it->second])
-                                  ? fmt::format(fg(orange), " @ native\n")
-                                  : fmt::format(fg(orange), " @ {:08x}\n", std::get<addr>(functions[it->second]));
+                if (index < functions.size()
+                    and not functions[index].valueless_by_exception()
+                    and not std::holds_alternative<std::monostate>(functions[index])) {
+                    /// Print the name if we know it; otherwise, print the index.
+                    const auto islib = std::holds_alternative<library_function>(functions[index]);
+                    if (it != functions_map.end()) result += fmt::format(fg(yellow), "       call {}", styled(it->first, fg(green)));
+                    else if (not islib) result += fmt::format(fg(yellow), "       call {}", styled(index, fg(magenta)));
+
+                    /// Print the type of the call.
+                    if (std::holds_alternative<native_function>(functions[index])) {
+                        result += fmt::format(fg(orange), " @ native\n");
+                    } else if (islib) {
+                        result += fmt::format(fg(yellow), "       call {} {}\n",                                    //
+                                              styled(std::get<library_function>(functions[index]).name, fg(green)), //
+                                              styled("@ library", fg(orange)));
+                    } else {
+                        result += fmt::format(fg(orange), " @ {:08x}\n", std::get<addr>(functions[index]));
+                    }
                 } else result += fmt::format(fg(yellow), "       call {}\n", styled(index, fg(white)));
             } break;
 

@@ -156,7 +156,7 @@ class interpreter : ::interp_handle_t {
     /// The underscores are due to the fact that, sometimes, you don’t
     /// want to use this directly, and they make you think twice about
     /// using this.
-    std::array<word, 64> _registers_;
+    std::array<word, 64> _registers_{};
 
     /// Stack pointer.
     addr sp{};
@@ -166,10 +166,24 @@ class interpreter : ::interp_handle_t {
 
     /// The stack.
     std::vector<word> stack;
-    addr stack_base;
+    addr stack_base{};
+
+    /// Loaded libraries.
+    struct library {
+        void* handle;
+        std::unordered_map<std::string, usz> functions;
+    };
+
+    struct library_function {
+        void* handle;
+        usz num_params;
+        std::string name;
+    };
+
+    std::unordered_map<std::string, library> libraries;
 
     /// Functions in the bytecode. NEVER reorder or remove elements from these.
-    using func_t = std::variant<std::monostate, addr, native_function>;
+    using func_t = std::variant<std::monostate, addr, native_function, library_function>;
     std::vector<func_t> functions;
     std::unordered_map<std::string, usz> functions_map;
 
@@ -221,6 +235,12 @@ class interpreter : ::interp_handle_t {
     /// Read an address from the bytecode at ip.
     word read_sized_address_at_ip(opcode op);
 
+    /// Create a call.
+    void create_call_internal(usz index);
+
+    /// Separate function because it’s just too horrible.
+    void do_library_call_unsafe(library_function& f);
+
 public:
     /// Maximum stack size.
     usz max_stack_size = 1024 * 1024;
@@ -233,16 +253,16 @@ public:
     /// ===========================================================================
 
     /// Construct an interpreter.
-    interpreter() {
-        /// Push an invalid instruction to make sure jumps to 0 throw.
-        bytecode.push_back(static_cast<opcode_t>(opcode::invalid));
-    }
+    explicit interpreter();
 
     /// Copying/moving this is a bad idea.
     interpreter(const interpreter&) = delete;
-    interpreter(interpreter&&) = delete;
+    interpreter(interpreter&&) noexcept = delete;
     interpreter& operator=(const interpreter&) = delete;
-    interpreter& operator=(interpreter&&) = delete;
+    interpreter& operator=(interpreter&&) noexcept = delete;
+
+    /// Free resources.
+    ~interpreter() noexcept;
 
     /// Define a binding to a native function.
     void defun(const std::string& name, native_function func);
@@ -269,6 +289,12 @@ public:
     /// Get the value of a register.
     word r(reg r) const;
     void r(reg r, word value);
+
+    /// ===========================================================================
+    ///  Linker.
+    /// ===========================================================================
+    /// Call a function in a shared library by name.
+    void library_call_unsafe(const std::string& library_path, const std::string& function_name, usz num_params);
 
     /// ===========================================================================
     ///  Operations.

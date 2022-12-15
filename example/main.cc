@@ -16,6 +16,10 @@ int main(int argc, char** argv) {
     interp::interpreter interp;
     using namespace interp::literals;
 
+    /// Print hello world using libc puts().
+    interp.create_move(2_r, (interp::word) "Hello, world!");
+    interp.library_call_unsafe("libc.so.6", "puts", 1);
+
     /// Loop.
     interp.create_move(3_r, 9_w);
     auto start = interp.current_addr();
