@@ -1002,7 +1002,7 @@ std::string interp::interpreter::disassemble() const {
                 } else repeat (4) r = fmt::format_to(r, "   ");
 
                 /// Print the mnemonic.
-                r = fmt::format_to(r, "            {} {}", styled("mov", fg(yellow)), reg_str(bytecode[i]));
+                r = fmt::format_to(r, "            {}  {}", styled("mov", fg(yellow)), reg_str(bytecode[i]));
                 r = imm
                     ? fmt::format_to(r, "{} {}\n", comma, styled(imm_value, fg(magenta)))
                     : fmt::format_to(r, "{} {}\n", comma, reg_str(bytecode[i + 1]));
@@ -1032,7 +1032,7 @@ std::string interp::interpreter::disassemble() const {
 
                 /// Align and print the mnemonic.
                 repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
-                fmt::format_to(r, fg(yellow), "    load {}{} {}{}{}\n", reg_str(regnum), comma, lbrack, styled(addr, fg(dark_green)), rbrack);
+                fmt::format_to(r, fg(yellow), "    ld   {}{} {}{}{}\n", reg_str(regnum), comma, lbrack, styled(addr, fg(dark_green)), rbrack);
             } break;
 
             case opcode::load_rel8:
@@ -1049,7 +1049,7 @@ std::string interp::interpreter::disassemble() const {
 
                 /// Align and print the mnemonic.
                 repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
-                fmt::format_to(r, fg(yellow), " load {}{} {}{} {} {}{}\n", reg_str(dest), comma, lbrack, reg_str(src), plus, styled(addr, fg(dark_green)), rbrack);
+                fmt::format_to(r, fg(yellow), " ld   {}{} {}{} {} {}{}\n", reg_str(dest), comma, lbrack, reg_str(src), plus, styled(addr, fg(dark_green)), rbrack);
             } break;
 
             case opcode::store8:
@@ -1065,7 +1065,7 @@ std::string interp::interpreter::disassemble() const {
 
                 /// Align and print the mnemonic.
                 repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
-                fmt::format_to(r, fg(yellow), "    store {}{}{}{} {}\n", lbrack, styled(addr, fg(dark_green)), rbrack, comma, reg_str(regnum));
+                fmt::format_to(r, fg(yellow), "    st   {}{}{}{} {}\n", lbrack, styled(addr, fg(dark_green)), rbrack, comma, reg_str(regnum));
             } break;
 
             case opcode::store_rel8:
@@ -1082,20 +1082,20 @@ std::string interp::interpreter::disassemble() const {
 
                 /// Align and print the mnemonic.
                 repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
-                fmt::format_to(r, fg(yellow), " store {}{} {} {}{}{} {}\n", lbrack, reg_str(dest), plus, styled(addr, fg(dark_green)), rbrack, comma, reg_str(src));
+                fmt::format_to(r, fg(yellow), " st   {}{} {} {}{}{} {}\n", lbrack, reg_str(dest), plus, styled(addr, fg(dark_green)), rbrack, comma, reg_str(src));
             } break;
 
-            case opcode::add: print_arith("add"); break;
-            case opcode::sub: print_arith("sub"); break;
+            case opcode::add: print_arith("add "); break;
+            case opcode::sub: print_arith("sub "); break;
             case opcode::muli: print_arith("muli"); break;
             case opcode::mulu: print_arith("mulu"); break;
             case opcode::divi: print_arith("divi"); break;
             case opcode::divu: print_arith("divu"); break;
             case opcode::remi: print_arith("remi"); break;
             case opcode::remu: print_arith("remu"); break;
-            case opcode::shift_left: print_arith("shl"); break;
-            case opcode::shift_right_arithmetic: print_arith("sar"); break;
-            case opcode::shift_right_logical: print_arith("shr"); break;
+            case opcode::shift_left: print_arith("shl "); break;
+            case opcode::shift_right_arithmetic: print_arith("sar "); break;
+            case opcode::shift_right_logical: print_arith("shr "); break;
 
             case opcode::call8:
             case opcode::call16:
@@ -1133,7 +1133,7 @@ std::string interp::interpreter::disassemble() const {
             case opcode::jmp64: {
                 auto a = print_and_read_addr(orange, op);
                 repeat (8 - address_operand_size(op)) result += "   ";
-                result += fmt::format("       {} {:08x}\n", styled("jmp", fg(yellow)), styled(a, fg(orange)));
+                result += fmt::format("       {} {:08x}\n", styled("jmp ", fg(yellow)), styled(a, fg(orange)));
             } break;
 
             case opcode::jnz8:
@@ -1144,7 +1144,7 @@ std::string interp::interpreter::disassemble() const {
                 result += fmt::format(fg(red), "{:02x} ", r);
                 auto a = print_and_read_addr(orange, op);
                 repeat (8 - address_operand_size(op)) result += "   ";
-                result += fmt::format("    {} {}{} {:08x}\n", styled("jnz", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
+                result += fmt::format("    {} {}{} {:08x}\n", styled("jnz ", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
             } break;
         }
     }
