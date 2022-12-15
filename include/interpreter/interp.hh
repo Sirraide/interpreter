@@ -24,19 +24,29 @@ namespace interp {
 /// Forward decls.
 class interpreter;
 
-/// Typedefs.
+/// Opcode of an instruction.
 using opcode_t = u8;
+
+/// Bytecode address.
 using addr = usz;
+
+/// Native function handle.
 using native_function = std::function<void(interpreter&)>;
+
+/// Register size.
+using word = u64;
+
+/// Register.
 enum struct reg : u8 {
     arith_imm_32 = 0,
     arith_imm_64 = 128,
 };
-using word = u64;
+
+/// Pointer.
+enum struct ptr : u64 {null = 0};
 
 /// Constants.
 constexpr static usz ip_start_addr = 1;
-
 constexpr static u8 osz_mask = 0b1100'0000;
 constexpr static u8 reg_mask = static_cast<u8>(~osz_mask);
 
@@ -50,6 +60,10 @@ constexpr word operator""_w(unsigned long long a) { return static_cast<word>(a);
 constexpr reg operator|(reg r, u8 s) { return static_cast<reg>(static_cast<u8>(r) | s); }
 constexpr u8 operator+(reg r) { return static_cast<u8>(r); }
 constexpr u8 index(reg r) { return static_cast<u8>(r) & reg_mask; }
+
+/// Pointer helpers.
+constexpr u64 operator+(ptr p) { return static_cast<u64>(p); }
+constexpr ptr operator+(ptr p, word a) { return static_cast<ptr>(static_cast<u64>(p) + a); }
 
 /// Opcode.
 enum struct opcode : opcode_t {
@@ -118,9 +132,36 @@ enum struct opcode : opcode_t {
     jnz32,
     jnz64,
 
+    /// Load a value from memory.
+    load8,
+    load16,
+    load32,
+    load64,
+
+    /// Load a value relative to a register. ‘r0’ is the stack base.
+    load_rel8,
+    load_rel16,
+    load_rel32,
+    load_rel64,
+
+    /// Store a register to memory.
+    store8,
+    store16,
+    store32,
+    store64,
+
+    /// Store a register relative to a register. ‘r0’ is the stack base.
+    store_rel8,
+    store_rel16,
+    store_rel32,
+    store_rel64,
+
     /// For sanity checks.
     max_opcode
 };
+
+/// Opcode helpers.
+constexpr opcode_t operator+(opcode o) { return static_cast<opcode_t>(o); }
 
 /// Macro used for codegenning arithmetic instructions.
 #define INTERP_ALL_ARITHMETIC_INSTRUCTIONS(F) \
@@ -158,15 +199,18 @@ class interpreter : public ::interp_handle_t {
     /// using this.
     std::array<word, 64> _registers_{};
 
-    /// Stack pointer.
-    addr sp{};
+    /// Stack pointer. This *must* always be aligned to 8 bytes.
+    ptr sp{};
 
     /// The code that we’re executing.
     std::vector<u8> bytecode;
 
-    /// The stack.
-    std::vector<word> stack;
-    addr stack_base{};
+    /// Global variables and stack.
+    std::vector<u8> _memory_;
+    ptr stack_base{};
+
+    /// Globals pointer.
+    ptr gp{};
 
     /// Loaded libraries.
     struct library {
@@ -183,9 +227,15 @@ class interpreter : public ::interp_handle_t {
     std::unordered_map<std::string, library> libraries;
 
     /// Functions in the bytecode. NEVER reorder or remove elements from these.
-    using func_t = std::variant<std::monostate, addr, native_function, library_function>;
-    std::vector<func_t> functions;
+    struct function {
+        std::variant<std::monostate, addr, native_function, library_function> address = std::monostate{};
+        usz locals_size{};
+    };
+    std::vector<function> functions;
     std::unordered_map<std::string, usz> functions_map;
+
+    /// The index of the function that we’re currently emitting.
+    usz current_function = 0;
 
     /// How many stack frames deep we are.
     usz stack_frame_count{};
@@ -242,8 +292,8 @@ class interpreter : public ::interp_handle_t {
     void do_library_call_unsafe(library_function& f);
 
 public:
-    /// Maximum stack size.
-    usz max_stack_size = 1024 * 1024;
+    /// Maximum memory for globals and the stack.
+    usz max_memory = 1024 * 1024;
 
     /// Last error. Used by the C API.
     std::string last_error;
@@ -278,7 +328,10 @@ public:
     ///  State manipulation.
     /// ===========================================================================
     /// Get the value of an argument register.
-    word arg(usz index, interp_size sz) const;
+    word arg(usz index, interp_size_mask sz) const;
+
+    /// Load a value from memory.
+    word load_mem(ptr p, usz sz) const;
 
     /// Push a value onto the stack.
     void push(word value);
@@ -293,11 +346,53 @@ public:
     /// Set the return value.
     void set_return_value(word value);
 
+    /// Store a value to memory.
+    void store_mem(ptr p, word value, usz sz);
+
     /// ===========================================================================
     ///  Linker.
     /// ===========================================================================
     /// Call a function in a shared library by name.
-    void library_call_unsafe(const std::string& library_path, const std::string& function_name, usz num_params);
+    void create_library_call_unsafe(const std::string& library_path, const std::string& function_name, usz num_params);
+
+    /// ===========================================================================
+    ///  Memory.
+    /// ===========================================================================
+    /// Allocate memory on the stack.
+    ///
+    /// This allocates *at least* `size` bytes, but may allocate more.
+    ///
+    /// \param size The size of the allocation.
+    /// \return A stack offset corresponding to the start of the allocation.
+    word create_alloca(word size);
+
+    /// Create a global variable.
+    ///
+    /// This allocates *at least* `size` bytes, but may allocate more.
+    ///
+    /// \param size The size of the allocation.
+    /// \return A global pointer corresponding to the start of the allocation.
+    ptr create_global(word size);
+
+    /// Load from memory.
+    void create_load(reg dest, ptr src);
+
+    /// Indirect load from memory.
+    ///
+    /// \param dest The destination register.
+    /// \param src The register containing the base address. r0 represents the stack base pointer.
+    /// \param offs The offset from the base address.
+    void create_load(reg dest, reg src, word offs);
+
+    /// Store to memory.
+    void create_store(ptr dest, reg src);
+
+    /// Indirect store to memory.
+    ///
+    /// \param dest The register containing the base address. r0 represents the stack base pointer.
+    /// \param offs The offset from the base address.
+    /// \param src The source register.
+    void create_store(reg dest, word offs, reg src);
 
     /// ===========================================================================
     ///  Operations.
@@ -308,14 +403,6 @@ public:
     /// Create a move instruction.
     void create_move(reg dest, reg src);
     void create_move(reg dest, word imm);
-
-    /// Arithmetic instructions
-#define ARITH(name, ...)                                          \
-    void INTERP_CAT(create_, name)(reg dest, reg src1, reg src2); \
-    void INTERP_CAT(create_, name)(reg dest, reg src, word imm);  \
-    void INTERP_CAT(create_, name)(reg dest, word imm, reg src);
-    INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
-#undef ARITH
 
     /// Create a call to a function.
     void create_call(const std::string& name);
@@ -331,6 +418,14 @@ public:
 
     /// Get the current address.
     addr current_addr() const;
+
+    /// Arithmetic instructions
+#define ARITH(name, ...)                                          \
+    void INTERP_CAT(create_, name)(reg dest, reg src1, reg src2); \
+    void INTERP_CAT(create_, name)(reg dest, reg src, word imm);  \
+    void INTERP_CAT(create_, name)(reg dest, word imm, reg src);
+    INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
+#undef ARITH
 };
 
 } // namespace interp

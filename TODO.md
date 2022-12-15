@@ -1,0 +1,4 @@
+- [x] global/local vars
+- [ ] pushregs/popregs
+- [ ] cmp instruction
+- [ ] mov/lea from memory to register

@@ -3,11 +3,12 @@
 
 #include <interpreter/interp.hh>
 
-#define defer auto INTERP_CAT($$defer_instance_, __COUNTER__) = $$defer{}, [&]()
 #define tempset $$tempset_type INTERP_CAT($$tempset_instance_, __COUNTER__) = $$tempset_stage_1{} %
 
 #define REP(n, var) for (usz var = 0; var < (n); var++)
 #define repeat(n) REP(n, INTERP_CAT($$rep, __COUNTER__))
+
+#define defer auto INTERP_CAT($$defer_instance_, __COUNTER__) = $$defer{}, [&]()
 
 template <typename callable>
 struct $$defer_type {

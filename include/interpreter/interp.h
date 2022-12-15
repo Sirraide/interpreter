@@ -27,12 +27,12 @@ typedef uint64_t interp_word;
 typedef uint64_t interp_address;
 
 /// Size flags.
-typedef enum interp_size {
-    INTERP_SZ_64 = 0,
-    INTERP_SZ_32 = 0b10000000,
-    INTERP_SZ_16 = 0b01000000,
-    INTERP_SZ_8 = 0b11000000,
-} interp_size;
+typedef enum interp_size_mask {
+    INTERP_SIZE_MASK_64 = 0,
+    INTERP_SIZE_MASK_32 = 0b10000000,
+    INTERP_SIZE_MASK_16 = 0b01000000,
+    INTERP_SIZE_MASK_8 = 0b11000000,
+} interp_size_mask;
 
 /// ===========================================================================
 ///  Interpreter creation and destruction.
@@ -99,7 +99,7 @@ interp_code interp_run(interp_handle handle, interp_word* retval);
 interp_code interp_arg(
     interp_handle handle,
     size_t index,
-    interp_size sz,
+    interp_size_mask sz,
     interp_word* value
 );
 

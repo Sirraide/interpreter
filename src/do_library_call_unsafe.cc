@@ -1,14 +1,14 @@
 #include <interpreter/interp.hh>
 
 #define r(x) _registers_[x + 1]
-#define f(...) ((u64(*)(__VA_ARGS__))function.handle)
+#define f(...) ((u64(*)(__VA_ARGS__))func.handle)
 #define u5 u64, u64, u64, u64, u64
 #define u10 u5, u5
 #define r5(x) r(x), r(x + 2), r(x + 3), r(x + 4), r(x + 5)
 #define r10(x) r5(x), r5(x + 5)
 
-void interp::interpreter::do_library_call_unsafe(interp::interpreter::library_function& function) {
-    switch (function.num_params) {
+void interp::interpreter::do_library_call_unsafe(interp::interpreter::library_function& func) {
+    switch (func.num_params) {
         case 0: r(0) = f() (); break;
         case 1: r(0) = f(u64) (r(1)); break;
         case 2: r(0) = f(u64, u64) (r(1), r(2)); break;
@@ -72,6 +72,6 @@ void interp::interpreter::do_library_call_unsafe(interp::interpreter::library_fu
         case 60: r(0) = f(u10, u10, u10, u10, u10, u10) (r10(1), r10(2), r10(3), r10(4), r10(5), r10(6)); break;
         case 61: r(0) = f(u10, u10, u10, u10, u10, u10, u64) (r10(1), r10(2), r10(3), r10(4), r10(5), r10(6), r(61)); break;
         case 62: r(0) = f(u10, u10, u10, u10, u10, u10, u64, u64) (r10(1), r10(2), r10(3), r10(4), r10(5), r10(6), r(61), r(62)); break;
-        default: throw error("Cannot call a function with more than 62 arguments");
+        default: throw error("Sorry, cannot call a library function with more than 62 arguments");
     }
 }

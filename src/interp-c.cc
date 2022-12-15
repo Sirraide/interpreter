@@ -73,7 +73,7 @@ interp_code interp_run(interp_handle handle, interp_word* retval) {
 interp_code interp_arg(
     interp_handle handle,
     usz index,
-    interp_size sz,
+    interp_size_mask sz,
     interp_word* value
 ) {
     auto i = static_cast<interp::interpreter*>(handle);
@@ -147,7 +147,7 @@ interp_code interp_library_call_unsafe(
 ) {
     auto i = static_cast<interp::interpreter*>(handle);
     try {
-        i->library_call_unsafe(name, func, argc);
+        i->create_library_call_unsafe(name, func, argc);
         return INTERP_OK;
     } catch (const std::exception& e) {
         i->last_error = e.what();

@@ -23,7 +23,13 @@ using namespace interp::integers;
 /// ===========================================================================
 interp::interpreter::interpreter() {
     /// Push an invalid instruction to make sure jumps to 0 throw.
-    bytecode.push_back(static_cast<opcode_t>(opcode::invalid));
+    bytecode.push_back(+opcode::invalid);
+
+    /// Make sure the bottommost address is unused so that NULL is always invalid.
+    gp = static_cast<ptr>(1);
+
+    /// Create the entry point.
+    create_function("__entry__");
 }
 
 interp::interpreter::~interpreter() noexcept {
@@ -41,21 +47,22 @@ void interp::interpreter::defun(const std::string& name, interp::native_function
     /// Function is already declared.
     if (auto it = functions_map.find(name); it != functions_map.end()) {
         /// Duplicate function definition.
-        if (not std::holds_alternative<std::monostate>(functions.at(it->second)))
+        if (not std::holds_alternative<std::monostate>(functions.at(it->second).address))
             throw error("Function '{}' is already defined.", name);
 
         /// Resolve the forward declaration.
-        functions[it->second] = func;
+        functions[it->second].address = func;
     }
 
     /// Add the function.
     else {
         functions_map[name] = functions.size();
-        functions.emplace_back(std::move(func));
+        functions.push_back({});
+        functions.back().address = func;
     }
 }
 
-interp::word interp::interpreter::arg(usz index, interp_size sz) const {
+interp::word interp::interpreter::arg(usz index, interp_size_mask sz) const {
     /// r2 is the first argument register.
     index += 2;
 
@@ -67,14 +74,30 @@ interp::word interp::interpreter::arg(usz index, interp_size sz) const {
     return read_register(static_cast<reg>(index) | sz);
 }
 
+interp::word interp::interpreter::load_mem(ptr p, usz sz) const {
+    /// Make sure the pointer is valid.
+    if (not +p or +p >= _memory_.size()) [[unlikely]] { throw error("Segmentation fault. Invalid pointer: {:#08x}", +p); }
+
+    /// Return the value.
+    switch (sz) {
+        case 1: return _memory_[+p];
+        case 2: return *reinterpret_cast<const u16*>(_memory_.data() + +p);
+        case 4: return *reinterpret_cast<const u32*>(_memory_.data() + +p);
+        case 8: return *reinterpret_cast<const u64*>(_memory_.data() + +p);
+        default: throw error("Invalid size: {}", sz);
+    }
+}
+
 void interp::interpreter::push(word value) {
-    if (sp == max_stack_size) throw error("Stack overflow.");
-    stack[sp++] = value;
+    if (+sp == max_memory) throw error("Stack overflow");
+    *reinterpret_cast<word*>(_memory_.data() + +sp) = value;
+    sp = static_cast<ptr>(+sp + sizeof(word));
 }
 
 auto interp::interpreter::pop() -> word {
-    if (sp == 0) throw error("Stack underflow.");
-    return stack[--sp];
+    if (sp <= gp) throw error("Stack underflow");
+    sp = static_cast<ptr>(+sp - sizeof(word));
+    return *reinterpret_cast<word*>(_memory_.data() + +sp);
 }
 
 interp::word interp::interpreter::r(reg r) const {
@@ -89,29 +112,69 @@ void interp::interpreter::set_return_value(word value) {
     _registers_[1] = value;
 }
 
+void interp::interpreter::store_mem(ptr p, word value, usz sz) {
+    /// Make sure the pointer is valid.
+    if (not +p or +p >= _memory_.size()) [[unlikely]] { throw error("Segmentation fault. Invalid pointer: {:#08x}", +p); }
+
+    /// Store the value.
+    switch (sz) {
+        case 1: _memory_[+p] = static_cast<u8>(value); break;
+        case 2: *reinterpret_cast<u16*>(_memory_.data() + +p) = static_cast<u16>(value); break;
+        case 4: *reinterpret_cast<u32*>(_memory_.data() + +p) = static_cast<u32>(value); break;
+        case 8: *reinterpret_cast<u64*>(_memory_.data() + +p) = static_cast<u64>(value); break;
+        default: throw error("Invalid size: {}", sz);
+    }
+}
+
 constexpr static usz address_operand_size(interp::opcode op) {
     switch (op) {
         case interp::opcode::call8:
         case interp::opcode::jmp8:
         case interp::opcode::jnz8:
+        case interp::opcode::load8:
+        case interp::opcode::store8:
+        case interp::opcode::load_rel8:
+        case interp::opcode::store_rel8:
             return 1;
 
         case interp::opcode::call16:
         case interp::opcode::jmp16:
         case interp::opcode::jnz16:
+        case interp::opcode::load16:
+        case interp::opcode::store16:
+        case interp::opcode::load_rel16:
+        case interp::opcode::store_rel16:
             return 2;
 
         case interp::opcode::call32:
         case interp::opcode::jmp32:
         case interp::opcode::jnz32:
+        case interp::opcode::load32:
+        case interp::opcode::store32:
+        case interp::opcode::load_rel32:
+        case interp::opcode::store_rel32:
             return 4;
 
         case interp::opcode::call64:
         case interp::opcode::jmp64:
         case interp::opcode::jnz64:
+        case interp::opcode::load64:
+        case interp::opcode::store64:
+        case interp::opcode::load_rel64:
+        case interp::opcode::store_rel64:
             return 8;
 
         default: return 0;
+    }
+}
+
+constexpr static usz register_size(interp::reg r) {
+    switch (+r & interp::osz_mask) {
+        case INTERP_SIZE_MASK_8: return 1;
+        case INTERP_SIZE_MASK_16: return 2;
+        case INTERP_SIZE_MASK_32: return 4;
+        case INTERP_SIZE_MASK_64: return 8;
+        default: std::unreachable();
     }
 }
 
@@ -152,7 +215,7 @@ void interp::interpreter::encode_arithmetic(opcode op, reg rdest, reg r1, reg r2
     check_regs(rdest, r1, r2);
 
     /// Encode the instruction.
-    bytecode.push_back(static_cast<opcode_t>(op));
+    bytecode.push_back(+op);
     bytecode.push_back(+rdest);
     bytecode.push_back(+r1);
     bytecode.push_back(+r2);
@@ -166,7 +229,7 @@ void interp::interpreter::encode_arithmetic(opcode op, reg dest, reg src, word i
     check_regs(dest, src);
 
     /// Encode the instruction.
-    bytecode.push_back(static_cast<opcode_t>(op));
+    bytecode.push_back(+op);
     bytecode.push_back(+dest);
     bytecode.push_back(+src);
     bytecode.push_back(imm > UINT32_MAX ? +reg::arith_imm_64 : +reg::arith_imm_32);
@@ -183,7 +246,7 @@ void interp::interpreter::encode_arithmetic(opcode op, reg dest, word imm, reg s
     check_regs(dest, src);
 
     /// Encode the instruction.
-    bytecode.push_back(static_cast<opcode_t>(op));
+    bytecode.push_back(+op);
     bytecode.push_back(+dest);
     bytecode.push_back(imm > UINT32_MAX ? +reg::arith_imm_64 : +reg::arith_imm_32);
     bytecode.push_back(+src);
@@ -245,20 +308,20 @@ interp::word interp::interpreter::read_sized_address_at_ip(opcode op) {
 
 void interp::interpreter::set_register(reg r, word value) {
     switch (+r & osz_mask) {
-        case INTERP_SZ_8: *reinterpret_cast<u8*>(&_registers_[index(r)]) = static_cast<u8>(value); break;
-        case INTERP_SZ_16: *reinterpret_cast<u16*>(&_registers_[index(r)]) = static_cast<u16>(value); break;
-        case INTERP_SZ_32: *reinterpret_cast<u32*>(&_registers_[index(r)]) = static_cast<u32>(value); break;
-        case INTERP_SZ_64: _registers_[index(r)] = value; break;
+        case INTERP_SIZE_MASK_8: *reinterpret_cast<u8*>(&_registers_[index(r)]) = static_cast<u8>(value); break;
+        case INTERP_SIZE_MASK_16: *reinterpret_cast<u16*>(&_registers_[index(r)]) = static_cast<u16>(value); break;
+        case INTERP_SIZE_MASK_32: *reinterpret_cast<u32*>(&_registers_[index(r)]) = static_cast<u32>(value); break;
+        case INTERP_SIZE_MASK_64: _registers_[index(r)] = value; break;
         default: std::unreachable();
     }
 }
 
 interp::word interp::interpreter::read_register(reg r) const {
     switch (+r & osz_mask) {
-        case INTERP_SZ_8: return *reinterpret_cast<const u8*>(&_registers_[index(r)]);
-        case INTERP_SZ_16: return *reinterpret_cast<const u16*>(&_registers_[index(r)]);
-        case INTERP_SZ_32: return *reinterpret_cast<const u32*>(&_registers_[index(r)]);
-        case INTERP_SZ_64: return _registers_[index(r)];
+        case INTERP_SIZE_MASK_8: return *reinterpret_cast<const u8*>(&_registers_[index(r)]);
+        case INTERP_SIZE_MASK_16: return *reinterpret_cast<const u16*>(&_registers_[index(r)]);
+        case INTERP_SIZE_MASK_32: return *reinterpret_cast<const u32*>(&_registers_[index(r)]);
+        case INTERP_SIZE_MASK_64: return _registers_[index(r)];
         default: std::unreachable();
     }
 }
@@ -268,7 +331,7 @@ interp::word interp::interpreter::read_register(reg r) const {
 /// ===========================================================================
 /// TODO: Write a tool that uses libtooling to generate
 ///       signatures and allow for type-safe-ish calls?
-void interp::interpreter::library_call_unsafe(const std::string& library_path, const std::string& function_name, usz num_params) {
+void interp::interpreter::create_library_call_unsafe(const std::string& library_path, const std::string& function_name, usz num_params) {
     /// Load the library.
     library* lib;
     if (auto it = libraries.find(library_path); it != libraries.end()) {
@@ -302,7 +365,8 @@ void interp::interpreter::library_call_unsafe(const std::string& library_path, c
 #endif
 
     /// Create the function.
-    functions.emplace_back(library_function{sym, num_params, function_name});
+    functions.push_back({});
+    functions.back().address = library_function{sym, num_params, function_name};
 
     /// Add the function to the library.
     lib->functions[function_name] = functions.size() - 1;
@@ -311,17 +375,115 @@ void interp::interpreter::library_call_unsafe(const std::string& library_path, c
     create_call_internal(functions.size() - 1);
 }
 
+
+/// ===========================================================================
+///  Memory.
+/// ===========================================================================
+/// Allocate memory on the stack.
+interp::word interp::interpreter::create_alloca(usz size) {
+    size = std::max(size, sizeof(word));
+    auto& f = functions[current_function];
+    auto p = f.locals_size;
+    f.locals_size += size;
+    return p;
+}
+
+/// Create a global variable.
+interp::ptr interp::interpreter::create_global(usz size) {
+    size = std::max(size, sizeof(word));
+    if (+gp + size > max_memory) throw error("Global memory overflow.");
+    auto p = gp;
+    gp = static_cast<ptr>(+gp + size);
+    return p;
+}
+
+/// Load from memory.
+void interp::interpreter::create_load(reg dest, ptr src) {
+    /// Check that the pointer is valid.
+    if (not +src or +src >= max_memory) throw error("Segmentation fault. Invalid pointer: {}", +src);
+
+    /// Make sure the destination is a register.
+    check_regs(dest);
+
+    /// Write the opcode.
+    if (+src < UINT8_MAX) bytecode.push_back(+opcode::load8);
+    else if (+src < UINT16_MAX) bytecode.push_back(+opcode::load16);
+    else if (+src < UINT32_MAX) bytecode.push_back(+opcode::load32);
+    else bytecode.push_back(+opcode::load64);
+
+    /// Write the destination register and source address.
+    bytecode.push_back(+dest);
+    write_addr(bytecode, +src);
+}
+
+/// Indirect load from memory.
+void interp::interpreter::create_load(reg dest, reg src, word offs) {
+    /// Make sure the registers are valid.
+    check_regs(dest, src);
+
+    /// Write the opcode.
+    if (offs < UINT8_MAX) bytecode.push_back(+opcode::load_rel8);
+    else if (offs < UINT16_MAX) bytecode.push_back(+opcode::load_rel16);
+    else if (offs < UINT32_MAX) bytecode.push_back(+opcode::load_rel32);
+    else bytecode.push_back(+opcode::load_rel64);
+
+    /// Write the destination and source registers.
+    bytecode.push_back(+dest);
+    bytecode.push_back(+src);
+
+    /// Write the offset.
+    write_addr(bytecode, offs);
+}
+
+/// Store to memory.
+void interp::interpreter::create_store(ptr dest, reg src) {
+    /// Check that the pointer is valid.
+    if (not +dest or +dest >= max_memory) throw error("Segmentation fault. Invalid pointer: {}", +dest);
+
+    /// Make sure the source is a register.
+    check_regs(src);
+
+    /// Write the opcode.
+    if (+dest < UINT8_MAX) bytecode.push_back(+opcode::store8);
+    else if (+dest < UINT16_MAX) bytecode.push_back(+opcode::store16);
+    else if (+dest < UINT32_MAX) bytecode.push_back(+opcode::store32);
+    else bytecode.push_back(+opcode::store64);
+
+    /// Write the destination address and source register.
+    bytecode.push_back(+src);
+    write_addr(bytecode, +dest);
+}
+
+/// Indirect store to memory.
+void interp::interpreter::create_store(reg dest, word offs, reg src) {
+    /// Make sure the registers are valid.
+    check_regs(dest, src);
+
+    /// Write the opcode.
+    if (offs < UINT8_MAX) bytecode.push_back(+opcode::store_rel8);
+    else if (offs < UINT16_MAX) bytecode.push_back(+opcode::store_rel16);
+    else if (offs < UINT32_MAX) bytecode.push_back(+opcode::store_rel32);
+    else bytecode.push_back(+opcode::store_rel64);
+
+    /// Write the destination and source registers.
+    bytecode.push_back(+dest);
+    bytecode.push_back(+src);
+
+    /// Write the offset.
+    write_addr(bytecode, offs);
+}
+
 /// ===========================================================================
 ///  Operations.
 /// ===========================================================================
-void interp::interpreter::create_return() { bytecode.push_back(static_cast<opcode_t>(opcode::ret)); }
+void interp::interpreter::create_return() { bytecode.push_back(+opcode::ret); }
 
 void interp::interpreter::create_move(reg dest, reg src) {
     /// Make sure the registers are valid.
     check_regs(dest, src);
 
     /// Encode the instruction.
-    bytecode.push_back(static_cast<opcode_t>(opcode::mov));
+    bytecode.push_back(+opcode::mov);
     bytecode.push_back(+dest);
     bytecode.push_back(+src);
 }
@@ -331,7 +493,7 @@ void interp::interpreter::create_move(reg dest, word imm) {
     check_regs(dest);
 
     /// Encode the instruction.
-    bytecode.push_back(static_cast<opcode_t>(opcode::mov));
+    bytecode.push_back(+opcode::mov);
     bytecode.push_back(+dest);
     bytecode.push_back(imm > UINT32_MAX ? +reg::arith_imm_64 : +reg::arith_imm_32);
 
@@ -350,10 +512,10 @@ INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
 #undef ARITH
 
 void interp::interpreter::create_call_internal(usz index) {
-    if (index < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call8));
-    else if (index < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call16));
-    else if (index < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::call32));
-    else bytecode.push_back(static_cast<opcode_t>(opcode::call64));
+    if (index < UINT8_MAX) bytecode.push_back(+opcode::call8);
+    else if (index < UINT16_MAX) bytecode.push_back(+opcode::call16);
+    else if (index < UINT32_MAX) bytecode.push_back(+opcode::call32);
+    else bytecode.push_back(+opcode::call64);
     write_addr(bytecode, index);
 }
 
@@ -368,7 +530,7 @@ void interp::interpreter::create_call(const std::string& name) {
 
         /// Add the record.
         functions_map[name] = functions.size();
-        functions.emplace_back(std::monostate{});
+        functions.push_back({});
     }
 
     /// Function found. Push the opcode and call index.
@@ -377,19 +539,19 @@ void interp::interpreter::create_call(const std::string& name) {
 
 void interp::interpreter::create_branch(addr target) {
     /// Push the opcode and target.
-    if (target < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jmp8));
-    else if (target < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jmp16));
-    else if (target < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jmp32));
-    else bytecode.push_back(static_cast<opcode_t>(opcode::jmp64));
+    if (target < UINT8_MAX) bytecode.push_back(+opcode::jmp8);
+    else if (target < UINT16_MAX) bytecode.push_back(+opcode::jmp16);
+    else if (target < UINT32_MAX) bytecode.push_back(+opcode::jmp32);
+    else bytecode.push_back(+opcode::jmp64);
     write_addr(bytecode, target);
 }
 
 void interp::interpreter::create_branch_ifnz(reg cond, addr target) {
     /// Push the opcode, condition and target.
-    if (target < UINT8_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jnz8));
-    else if (target < UINT16_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jnz16));
-    else if (target < UINT32_MAX) bytecode.push_back(static_cast<opcode_t>(opcode::jnz32));
-    else bytecode.push_back(static_cast<opcode_t>(opcode::jnz64));
+    if (target < UINT8_MAX) bytecode.push_back(+opcode::jnz8);
+    else if (target < UINT16_MAX) bytecode.push_back(+opcode::jnz16);
+    else if (target < UINT32_MAX) bytecode.push_back(+opcode::jnz32);
+    else bytecode.push_back(+opcode::jnz64);
     bytecode.push_back(+cond);
     write_addr(bytecode, target);
 }
@@ -397,14 +559,17 @@ void interp::interpreter::create_branch_ifnz(reg cond, addr target) {
 void interp::interpreter::create_function(const std::string& name) {
     /// Make sure the function doesn’t already exist.
     if (auto it = functions_map.find(name); it != functions_map.end()) {
-        if (not std::holds_alternative<std::monostate>(functions[it->second])) throw error("Function already exists.");
-        functions[it->second] = addr{bytecode.size()};
+        if (not std::holds_alternative<std::monostate>(functions[it->second].address)) throw error("Function already exists.");
+        functions[it->second].address = addr{bytecode.size()};
+        current_function = it->second;
     }
 
     /// Add the function.
     else {
-        functions_map[name] = functions.size();
-        functions.emplace_back(addr{bytecode.size()});
+        functions_map[name] = current_function = functions.size();
+        functions.push_back({});
+        functions.back().address = addr{bytecode.size()};
+
     }
 }
 
@@ -414,11 +579,19 @@ auto interp::interpreter::current_addr() const -> addr { return bytecode.size();
 ///  Execute bytecode.
 /// ===========================================================================
 interp::word interp::interpreter::run() {
-    stack_base = 0;
-    stack.clear();
-    stack.reserve(1024 * 1024);
+    /// Make sure the memory has the right size.
+    _memory_.resize(max_memory);
+
+    /// Set the instruction pointer to the entry point.
     ip = ip_start_addr;
-    sp = 0;
+
+    /// Allocate memory on the stack for the local variables of the entry point.
+    const auto zero_frame_ptr = static_cast<ptr>(+gp + functions[0].locals_size);
+    sp = zero_frame_ptr;
+
+    /// Set the base of the stack.
+    stack_base = zero_frame_ptr;
+
 
     /// Initialise registers.
     for (auto& reg : _registers_) reg = 0;
@@ -427,7 +600,7 @@ interp::word interp::interpreter::run() {
     for (;;) {
         if (ip >= bytecode.size()) [[unlikely]] { throw error("Instruction pointer out of bounds."); }
         switch (auto op = static_cast<opcode>(bytecode[ip++])) {
-            static_assert(opcode_t(opcode::max_opcode) == 27);
+            static_assert(opcode_t(opcode::max_opcode) == 43);
             default: throw error("Invalid opcode {}", u8(op));
 
             /// Do nothing.
@@ -435,11 +608,12 @@ interp::word interp::interpreter::run() {
 
             /// Return from a function.
             case opcode::ret: {
-                if (stack_base == 0) return _registers_[1];
+                /// Top stack frame. Halt the interpreter and return the value in the return register.
+                if (stack_base == zero_frame_ptr) return _registers_[1];
 
                 /// Pop the stack frame.
                 sp = stack_base;
-                stack_base = pop();
+                stack_base = static_cast<ptr>(pop());
                 ip = pop();
             } break;
 
@@ -449,7 +623,7 @@ interp::word interp::interpreter::run() {
                 auto src = static_cast<reg>(bytecode[ip++]);
 
                 /// Immediate.
-                if (src == reg::arith_imm_32 || src == reg::arith_imm_64) {
+                if (src == reg::arith_imm_32 or src == reg::arith_imm_64) {
                     word imm{};
                     std::memcpy(&imm, bytecode.data() + ip, src == reg::arith_imm_32 ? 4 : 8);
                     ip += src == reg::arith_imm_32 ? 4 : 8;
@@ -458,6 +632,64 @@ interp::word interp::interpreter::run() {
 
                 /// Register.
                 else { set_register(dest, read_register(src)); }
+            } break;
+
+            /// Load a value from memory.
+            case opcode::load8:
+            case opcode::load16:
+            case opcode::load32:
+            case opcode::load64: {
+                auto dest = static_cast<reg>(bytecode[ip++]);
+                auto p = read_sized_address_at_ip(op);
+
+                /// Load the value.
+                set_register(dest, load_mem(static_cast<ptr>(p), register_size(dest)));
+            } break;
+
+            /// Indirect load from memory.
+            case opcode::load_rel8:
+            case opcode::load_rel16:
+            case opcode::load_rel32:
+            case opcode::load_rel64: {
+                auto dest = static_cast<reg>(bytecode[ip++]);
+                auto src = static_cast<reg>(bytecode[ip++]);
+                auto offset = read_sized_address_at_ip(op);
+                ptr source_address{};
+
+                /// Compute the source address. Here, r0 is the stack base pointer.
+                source_address = (+src == 0 ? stack_base : static_cast<ptr>(read_register(src))) + offset;
+
+                /// Load the value.
+                set_register(dest, load_mem(source_address, register_size(dest)));
+            } break;
+
+            /// Store a value to memory.
+            case opcode::store8:
+            case opcode::store16:
+            case opcode::store32:
+            case opcode::store64: {
+                auto src = static_cast<reg>(bytecode[ip++]);
+                auto p = read_sized_address_at_ip(op);
+
+                /// Store the value.
+                store_mem(static_cast<ptr>(p), read_register(src), register_size(src));
+            } break;
+
+            /// Indirect store to memory.
+            case opcode::store_rel8:
+            case opcode::store_rel16:
+            case opcode::store_rel32:
+            case opcode::store_rel64: {
+                auto dest = static_cast<reg>(bytecode[ip++]);
+                auto src = static_cast<reg>(bytecode[ip++]);
+                auto offset = read_sized_address_at_ip(op);
+                ptr dest_address{};
+
+                /// Compute the destination address. Here, r0 is the stack base pointer.
+                dest_address = (+dest == 0 ? stack_base : static_cast<ptr>(read_register(dest))) + offset;
+
+                /// Store the value.
+                store_mem(dest_address, read_register(src), register_size(src));
             } break;
 
             /// Add two integers.
@@ -538,21 +770,25 @@ interp::word interp::interpreter::run() {
 
                 /// If it’s a native function, call it.
                 auto& func = functions.at(index);
-                if (std::holds_alternative<native_function>(func)) {
-                    std::get<native_function>(func)(*this);
+                if (std::holds_alternative<native_function>(func.address)) {
+                    std::get<native_function>(func.address)(*this);
                 }
 
                 /// Otherwise, push the return address and jump to the function.
-                else if (std::holds_alternative<addr>(func)) {
+                else if (std::holds_alternative<addr>(func.address)) {
                     push(ip);
-                    push(stack_base);
+                    push(static_cast<word>(stack_base));
                     stack_base = sp;
-                    ip = std::get<addr>(func);
+                    sp = static_cast<ptr>(+sp + func.locals_size);
+                    ip = std::get<addr>(func.address);
+
+                    /// Make sure we didn’t overflow the stack.
+                    if (+sp >= max_memory) [[unlikely]] { throw error("Stack overflow"); }
                 }
 
                 /// If it’s a library function, we need to do some black magic.
-                else if (std::holds_alternative<library_function>(func)) {
-                    auto& lib_func = std::get<library_function>(func);
+                else if (std::holds_alternative<library_function>(func.address)) {
+                    auto& lib_func = std::get<library_function>(func.address);
                     do_library_call_unsafe(lib_func);
                 }
 
@@ -608,16 +844,20 @@ std::string interp::interpreter::disassemble() const {
     using fmt::fg;
     using fmt::styled;
     static constexpr auto orange = static_cast<fmt::color>(0xF59762);
+    static constexpr auto dark_green = static_cast<fmt::color>(0x7DBDA2);
     static constexpr auto comma = styled(",", fg(white));
+    static constexpr auto plus = styled("+", fg(white));
+    static constexpr auto lbrack = styled("[", fg(white));
+    static constexpr auto rbrack = styled("]", fg(white));
 
     /// String representation of a register.
     const auto reg_str = [](u8 r) {
         std::string_view suffix;
         switch (r & osz_mask) {
-            case INTERP_SZ_8: suffix = "b"; break;
-            case INTERP_SZ_16: suffix = "w"; break;
-            case INTERP_SZ_32: suffix = "d"; break;
-            case INTERP_SZ_64: suffix = ""; break;
+            case INTERP_SIZE_MASK_8: suffix = "b"; break;
+            case INTERP_SIZE_MASK_16: suffix = "w"; break;
+            case INTERP_SIZE_MASK_32: suffix = "d"; break;
+            case INTERP_SIZE_MASK_64: suffix = ""; break;
             default: std::unreachable();
         }
         return fmt::format(fg(red), "r{}{}", index(static_cast<reg>(r)), suffix);
@@ -705,16 +945,13 @@ std::string interp::interpreter::disassemble() const {
         return index;
     };
 
-    /// Entry point.
-    result += fmt::format(fg(green), "__entry__{}\n", styled(":", fg(orange)));
-
     /// Iterate over the bytecode and disassemble each instruction.
     while (i < bytecode.size()) {
         /// Check if there is a function that starts at this address.
         auto func = ranges::find_if(functions_map, [&](auto&& p) {
             return p.second < functions.size()
-                   and std::holds_alternative<addr>(functions[p.second])
-                   and std::get<addr>(functions[p.second]) == i;
+                   and std::holds_alternative<addr>(functions[p.second].address)
+                   and std::get<addr>(functions[p.second].address) == i;
         });
 
         /// Print the function name if there is one.
@@ -731,7 +968,7 @@ std::string interp::interpreter::disassemble() const {
 
         /// Print the instruction mnemonic.
         switch (auto op = static_cast<opcode>(bytecode[i++])) {
-            static_assert(opcode_t(opcode::max_opcode) == 27);
+            static_assert(opcode_t(opcode::max_opcode) == 43);
             default:
                 repeat (8) result += "   ";
                 if (i == 1 and op == opcode::invalid) result += fmt::format(fg(white), "      .sentinel\n");
@@ -782,6 +1019,72 @@ std::string interp::interpreter::disassemble() const {
                 if (imm) i += bytecode[i + 1] == +reg::arith_imm_32 ? 4zu : 8zu;
             } break; // clang-format on
 
+            case opcode::load8:
+            case opcode::load16:
+            case opcode::load32:
+            case opcode::load64: {
+                /// Print the dest.
+                auto regnum = bytecode[i++];
+                auto r = fmt::format_to(std::back_inserter(result), "{:02x} ", rbyte(regnum));
+
+                /// Print the address.
+                auto addr = print_and_read_addr(dark_green, op);
+
+                /// Align and print the mnemonic.
+                repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
+                fmt::format_to(r, fg(yellow), "    load {}{} {}{}{}\n", reg_str(regnum), comma, lbrack, styled(addr, fg(dark_green)), rbrack);
+            } break;
+
+            case opcode::load_rel8:
+            case opcode::load_rel16:
+            case opcode::load_rel32:
+            case opcode::load_rel64: {
+                /// Print the dest and src.
+                auto dest = bytecode[i++];
+                auto src = bytecode[i++];
+                auto r = fmt::format_to(std::back_inserter(result), fg(red), "{:02x} {:02x} ", dest, src);
+
+                /// Print the address.
+                auto addr = print_and_read_addr(dark_green, op);
+
+                /// Align and print the mnemonic.
+                repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
+                fmt::format_to(r, fg(yellow), " load {}{} {}{} {} {}{}\n", reg_str(dest), comma, lbrack, reg_str(src), plus, styled(addr, fg(dark_green)), rbrack);
+            } break;
+
+            case opcode::store8:
+            case opcode::store16:
+            case opcode::store32:
+            case opcode::store64: {
+                /// Print the source.
+                auto regnum = bytecode[i++];
+                auto r = fmt::format_to(std::back_inserter(result), "{:02x} ", rbyte(regnum));
+
+                /// Print the address.
+                auto addr = print_and_read_addr(dark_green, op);
+
+                /// Align and print the mnemonic.
+                repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
+                fmt::format_to(r, fg(yellow), "    store {}{}{}{} {}\n", lbrack, styled(addr, fg(dark_green)), rbrack, comma, reg_str(regnum));
+            } break;
+
+            case opcode::store_rel8:
+            case opcode::store_rel16:
+            case opcode::store_rel32:
+            case opcode::store_rel64: {
+                /// Print the source and dest.
+                auto dest = bytecode[i++];
+                auto src = bytecode[i++];
+                auto r = fmt::format_to(std::back_inserter(result), fg(red), "{:02x} {:02x} ", dest, src);
+
+                /// Print the address.
+                auto addr = print_and_read_addr(dark_green, op);
+
+                /// Align and print the mnemonic.
+                repeat (8 - address_operand_size(op)) r = fmt::format_to(r, "   ");
+                fmt::format_to(r, fg(yellow), " store {}{} {} {}{}{} {}\n", lbrack, reg_str(dest), plus, styled(addr, fg(dark_green)), rbrack, comma, reg_str(src));
+            } break;
+
             case opcode::add: print_arith("add"); break;
             case opcode::sub: print_arith("sub"); break;
             case opcode::muli: print_arith("muli"); break;
@@ -804,22 +1107,22 @@ std::string interp::interpreter::disassemble() const {
                 /// Try and resolve the function name.
                 auto it = ranges::find_if(functions_map, [&](auto&& f) { return f.second == index; });
                 if (index < functions.size()
-                    and not functions[index].valueless_by_exception()
-                    and not std::holds_alternative<std::monostate>(functions[index])) {
+                    and not functions[index].address.valueless_by_exception()
+                    and not std::holds_alternative<std::monostate>(functions[index].address)) {
                     /// Print the name if we know it; otherwise, print the index.
-                    const auto islib = std::holds_alternative<library_function>(functions[index]);
+                    const auto islib = std::holds_alternative<library_function>(functions[index].address);
                     if (it != functions_map.end()) result += fmt::format(fg(yellow), "       call {}", styled(it->first, fg(green)));
                     else if (not islib) result += fmt::format(fg(yellow), "       call {}", styled(index, fg(magenta)));
 
                     /// Print the type of the call.
-                    if (std::holds_alternative<native_function>(functions[index])) {
+                    if (std::holds_alternative<native_function>(functions[index].address)) {
                         result += fmt::format(fg(orange), " @ native\n");
                     } else if (islib) {
                         result += fmt::format(fg(yellow), "       call {} {}\n",                                    //
-                                              styled(std::get<library_function>(functions[index]).name, fg(green)), //
+                                              styled(std::get<library_function>(functions[index].address).name, fg(green)), //
                                               styled("@ library", fg(orange)));
                     } else {
-                        result += fmt::format(fg(orange), " @ {:08x}\n", std::get<addr>(functions[index]));
+                        result += fmt::format(fg(orange), " @ {:08x}\n", std::get<addr>(functions[index].address));
                     }
                 } else result += fmt::format(fg(yellow), "       call {}\n", styled(index, fg(white)));
             } break;
