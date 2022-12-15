@@ -14,7 +14,7 @@
 #include <vector>
 
 /// Don’t want to deal w/ this rn.
-static_assert(sizeof(void*) == 8 && sizeof(usz) == 8, "Only 64-bit systems are supported.");
+static_assert(sizeof(void*) == 8 && sizeof(size_t) == 8, "Only 64-bit systems are supported.");
 
 /// This is so we can downcast more easily.
 struct interp_handle_t {};
@@ -89,12 +89,12 @@ enum struct opcode : opcode_t {
 
     /// Shift left.
     /// Encoding: arithmetic encoding.
-    shl,
+    shift_left,
 
     /// Shift right.
     /// Encoding: arithmetic encoding.
-    sar,
-    shr,
+    shift_right_arithmetic,
+    shift_right_logical,
 
     /// Function call.
     /// Operands: index.
@@ -132,9 +132,9 @@ enum struct opcode : opcode_t {
     F(divu, /, word)                          \
     F(remi, %, i64)                           \
     F(remu, %, word)                          \
-    F(shl, <<, word)                          \
-    F(sar, >>, i64)                           \
-    F(shr, >>, word)
+    F(shift_left, <<, word)                   \
+    F(shift_right_arithmetic, >>, i64)        \
+    F(shift_right_logical, >>, word)
 
 /// Error type.
 struct error : std::runtime_error {
@@ -147,7 +147,7 @@ struct error : std::runtime_error {
 ///  Interpreter struct.
 /// ===========================================================================
 /// This holds the interpreter state.
-class interpreter : ::interp_handle_t {
+class interpreter : public ::interp_handle_t {
     /// Instruction pointer.
     addr ip{};
 
@@ -310,10 +310,10 @@ public:
     void create_move(reg dest, word imm);
 
     /// Arithmetic instructions
-#define ARITH(name, ...)                                   \
-    void CAT(create_, name)(reg dest, reg src1, reg src2); \
-    void CAT(create_, name)(reg dest, reg src, word imm);  \
-    void CAT(create_, name)(reg dest, word imm, reg src);
+#define ARITH(name, ...)                                          \
+    void INTERP_CAT(create_, name)(reg dest, reg src1, reg src2); \
+    void INTERP_CAT(create_, name)(reg dest, reg src, word imm);  \
+    void INTERP_CAT(create_, name)(reg dest, word imm, reg src);
     INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
 #undef ARITH
 

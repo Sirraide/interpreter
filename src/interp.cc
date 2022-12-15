@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <fmt/color.h>
+#include <interpreter/internal.hh>
 #include <interpreter/interp.hh>
 #include <ranges>
 #include <utility>
@@ -15,6 +16,7 @@
 
 namespace ranges = std::ranges;
 namespace views = std::views;
+using namespace interp::integers;
 
 /// ===========================================================================
 ///  Miscellaneous.
@@ -337,12 +339,12 @@ void interp::interpreter::create_move(reg dest, word imm) {
     write_imm(bytecode, imm);
 }
 
-#define ARITH(name, ...)                                                            \
-    void interp::interpreter::CAT(create_, name)(reg dest, reg src1, reg src2) /**/ \
-    { encode_arithmetic(opcode::name, dest, src1, src2); }                          \
-    void interp::interpreter::CAT(create_, name)(reg dest, reg src, word imm) /**/  \
-    { encode_arithmetic(opcode::name, dest, src, imm); }                            \
-    void interp::interpreter::CAT(create_, name)(reg dest, word imm, reg src) /**/  \
+#define ARITH(name, ...)                                                                   \
+    void interp::interpreter::INTERP_CAT(create_, name)(reg dest, reg src1, reg src2) /**/ \
+    { encode_arithmetic(opcode::name, dest, src1, src2); }                                 \
+    void interp::interpreter::INTERP_CAT(create_, name)(reg dest, reg src, word imm) /**/  \
+    { encode_arithmetic(opcode::name, dest, src, imm); }                                   \
+    void interp::interpreter::INTERP_CAT(create_, name)(reg dest, word imm, reg src) /**/  \
     { encode_arithmetic(opcode::name, dest, imm, src); }
 INTERP_ALL_ARITHMETIC_INSTRUCTIONS(ARITH)
 #undef ARITH
@@ -507,19 +509,19 @@ interp::word interp::interpreter::run() {
             } break;
 
             /// Shift left.
-            case opcode::shl: {
+            case opcode::shift_left: {
                 auto [dest, src1, src2] = decode_arithmetic();
                 set_register(dest, src1 << (src2 & 63));
             } break;
 
             /// Logical shift right.
-            case opcode::shr: {
+            case opcode::shift_right_logical: {
                 auto [dest, src1, src2] = decode_arithmetic();
                 set_register(dest, src1 >> (src2 & 63));
             } break;
 
             /// Arithmetic shift right.
-            case opcode::sar: {
+            case opcode::shift_right_arithmetic: {
                 auto [dest, src1, src2] = decode_arithmetic();
                 set_register(dest, word(i64(src1) >> (src2 & 63)));
             } break;
@@ -788,9 +790,9 @@ std::string interp::interpreter::disassemble() const {
             case opcode::divu: print_arith("divu"); break;
             case opcode::remi: print_arith("remi"); break;
             case opcode::remu: print_arith("remu"); break;
-            case opcode::shl: print_arith("shl"); break;
-            case opcode::sar: print_arith("sar"); break;
-            case opcode::shr: print_arith("shr"); break;
+            case opcode::shift_left: print_arith("shl"); break;
+            case opcode::shift_right_arithmetic: print_arith("sar"); break;
+            case opcode::shift_right_logical: print_arith("shr"); break;
 
             case opcode::call8:
             case opcode::call16:
