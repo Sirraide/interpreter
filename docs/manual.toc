@@ -1,0 +1,25 @@
+\babel@toc {english}{}\relax 
+\contentsline {section}{\numberline {1}Introduction}{3}{}%
+\contentsline {section}{\numberline {2}Instruction Set}{4}{}%
+\contentsline {subsection}{\numberline {2.1}\leavevmode {\color {icolour}\bfseries nop}}{4}{}%
+\contentsline {subsection}{\numberline {2.2}\leavevmode {\color {icolour}\bfseries ret}}{4}{}%
+\contentsline {subsection}{\numberline {2.3}\leavevmode {\color {icolour}\bfseries mov} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs}/\textit {imm}}{4}{}%
+\contentsline {subsection}{\numberline {2.4}\leavevmode {\color {icolour}\bfseries add} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{4}{}%
+\contentsline {subsection}{\numberline {2.5}\leavevmode {\color {icolour}\bfseries sub} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{4}{}%
+\contentsline {subsection}{\numberline {2.6}\leavevmode {\color {icolour}\bfseries muli} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{4}{}%
+\contentsline {subsection}{\numberline {2.7}\leavevmode {\color {icolour}\bfseries mulu} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{5}{}%
+\contentsline {subsection}{\numberline {2.8}\leavevmode {\color {icolour}\bfseries divi} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{5}{}%
+\contentsline {subsection}{\numberline {2.9}\leavevmode {\color {icolour}\bfseries divu} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{5}{}%
+\contentsline {subsection}{\numberline {2.10}\leavevmode {\color {icolour}\bfseries remi} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{5}{}%
+\contentsline {subsection}{\numberline {2.11}\leavevmode {\color {icolour}\bfseries remu} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{5}{}%
+\contentsline {subsection}{\numberline {2.12}\leavevmode {\color {icolour}\bfseries shl} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{6}{}%
+\contentsline {subsection}{\numberline {2.13}\leavevmode {\color {icolour}\bfseries shr} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{6}{}%
+\contentsline {subsection}{\numberline {2.14}\leavevmode {\color {icolour}\bfseries sar} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs1}/\textit {imm1}, \leavevmode {\color {rcolour}\bfseries rs2}/\textit {imm2}}{6}{}%
+\contentsline {subsection}{\numberline {2.15}\leavevmode {\color {icolour}\bfseries call} \leavevmode {\color {rcolour}\bfseries ra}/\textit {addr}}{6}{}%
+\contentsline {subsection}{\numberline {2.16}\leavevmode {\color {icolour}\bfseries jmp} \leavevmode {\color {rcolour}\bfseries ra}/\textit {addr}}{6}{}%
+\contentsline {subsection}{\numberline {2.17}\leavevmode {\color {icolour}\bfseries jnz} \leavevmode {\color {rcolour}\bfseries rc}, \leavevmode {\color {rcolour}\bfseries ra}/\textit {addr}}{6}{}%
+\contentsline {subsection}{\numberline {2.18}\leavevmode {\color {icolour}\bfseries ld} \leavevmode {\color {rcolour}\bfseries rd}, \textit {imm}}{7}{}%
+\contentsline {subsection}{\numberline {2.19}\leavevmode {\color {icolour}\bfseries ld} \leavevmode {\color {rcolour}\bfseries rd}, \leavevmode {\color {rcolour}\bfseries rs}, \textit {imm}}{7}{}%
+\contentsline {subsection}{\numberline {2.20}\leavevmode {\color {icolour}\bfseries st} \textit {imm}, \leavevmode {\color {rcolour}\bfseries rs}}{7}{}%
+\contentsline {subsection}{\numberline {2.21}\leavevmode {\color {icolour}\bfseries st} \leavevmode {\color {rcolour}\bfseries rd}, \textit {imm}, \leavevmode {\color {rcolour}\bfseries rs}}{7}{}%
+\contentsline {section}{\numberline {3}Encoding}{8}{}%

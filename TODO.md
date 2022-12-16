@@ -2,3 +2,4 @@
 - [ ] pushregs/popregs
 - [ ] cmp instruction
 - [ ] mov/lea from memory to register
+- [ ] indirect calls/jumps.

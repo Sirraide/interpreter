@@ -1,0 +1,217 @@
+\documentclass[12pt, a4paper, oneside, final]{article}
+\usepackage[english]{babel}
+\usepackage{fontspec}
+\usepackage{array, tabularx, multirow}
+\usepackage[margin=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+%% Font etc.
+\setmainfont{Minion 3}
+\setmonofont{Fira Code}
+\parindent0pt
+\parsep6pt
+\parskip\parsep
+\frenchspacing
+
+%% Footnotes.
+\makeatletter
+\renewcommand\footnoterule{%
+    \kern-3\p@
+    \hrule\@width.4\columnwidth
+    \kern2.6\p@
+}
+
+\renewcommand\@makefntext[1]{%
+    \setlength\parindent{1em}%
+    \noindent
+    \mbox{\llap{{}\textsuperscript{\@thefnmark}\kern.5pt}}{#1}%1
+}
+
+%% Yeet stupid American Date format.
+\AtBeginDocument{
+    \def\today{\the\day\space%
+        \ifcase\the\month\or
+            January\or February\or March\or April\or May\or June\or
+            July\or August\or September\or October\or November\or December\else
+        \fi\space
+        \the\year
+    }
+}
+
+%% Theme.
+\newif\ifdarktheme \darkthemefalse
+
+%% Colours.
+\ifdarktheme
+    \definecolor{icolour}{HTML}{FFCC34}
+    \definecolor{rcolour}{HTML}{FF6188}
+    \else
+    \definecolor{icolour}{HTML}{5B3DF2}
+    \definecolor{rcolour}{HTML}{C10F4A}
+\fi
+
+\def\i#1{\textcolor{icolour}{\bfseries#1}}
+\def\r#1{\textcolor{rcolour}{\bfseries r#1}}
+
+%% Data.
+\title{Interpreter Manual}
+\author{Ætérnal (Sirraide)}
+\date{\today}
+
+%% Document.
+\makeatother
+\begin{document}
+\maketitle\clearpage
+\tableofcontents
+
+\clearpage\section{Introduction}
+\clearpage\section{Instruction Set}
+Each instruction consist of a 1-byte opcode and several operands. For the instruction encoding see §
+\ref{sect:encoding}.
+
+\subsection{\i{nop}}
+This instruction unsurprisingly does nothing.
+
+\subsection{\i{ret}}
+This instruction pops the current stack frame off the frame stack and returns from the current
+function. If called at the top stack frame, it will instead stop the interpreter, returning the
+value of the return register.
+
+\subsection{\i{mov} \r{d}, \r{s}/\textit{imm}}
+This instruction moves an immediate or the value of \r{s} into \r{d}. \r{d} cannot be \r{0}.
+\r{s}/\textit{imm} is encoded using \textit{r/imm} encoding.
+
+\subsection{\i{add} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction adds \r{s1}/\textit{imm1} and \r{s2}/\textit{imm2} and stores the result in \r{d}.
+At most one of the two source values may be an immediate; the immediate, if any, is encoded using
+\textit{r/imm} encoding. If the size of \r{d} is smaller than the sum, the result will be truncated.
+Disregarding \textit{r/imm} encoding, no register may be \r{0}.
+
+\subsection{\i{sub} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction subtracts \r{s2}/\textit{imm2} from \r{s1}/\textit{imm1} and stores the result in
+\r{d}. At most one of the two source values may be an immediate; the immediate, if any, is encoded
+using \textit{r/imm} encoding. If the size of \r{d} is smaller than the difference, the result will
+be truncated. Disregarding \textit{r/imm} encoding, no register may be \r{0}.
+
+\subsection{\i{muli} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction multiplies \r{s1}/\textit{imm1} and \r{s2}/\textit{imm2} using signed
+multiplication and stores the result in \r{d}. At most one of the two source values may be an
+immediate; the immediate, if any, is encoded using \textit{r/imm} encoding. If the size of \r{d} is
+smaller than the product, the result will be truncated. Disregarding \textit{r/imm} encoding, no
+register may be \r{0}.
+
+This instruction is identical to \i{mulu}, save that the latter performs unsigned multiplication.
+
+\subsection{\i{mulu} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction multiplies \r{s1}/\textit{imm1} and \r{s2}/\textit{imm2} using unsigned
+multiplication and stores the result in \r{d}. At most one of the two source values may be an
+immediate; the immediate, if any, is encoded using \textit{r/imm} encoding. If the size of \r{d} is
+smaller than the product, the result will be truncated. Disregarding \textit{r/imm} encoding, no
+register may be \r{0}.
+
+This instruction is identical to \i{muli}, save that the latter performs signed multiplication.
+
+\subsection{\i{divi} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction divides \r{s1}/\textit{imm1} by \r{s2}/\textit{imm2} using signed division and
+stores the result in \r{d}. At most one of the two source values may be an immediate; the immediate,
+if any, is encoded using \textit{r/imm} encoding. If the size of \r{d} is smaller than the quotient,
+the result will be truncated. Disregarding \textit{r/imm} encoding, no register may be \r{0}.
+
+This instruction is identical to \i{divu}, save that the latter performs unsigned division.
+
+If \r{s2}/\textit{imm2}, a division error is raised.
+
+\subsection{\i{divu} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction divides \r{s1}/\textit{imm1} by \r{s2}/\textit{imm2} using unsigned division and
+stores the result in \r{d}. At most one of the two source values may be an immediate; the immediate,
+if any, is encoded using \textit{r/imm} encoding. If the size of \r{d} is smaller than the quotient,
+the result will be truncated. Disregarding \textit{r/imm} encoding, no register may be \r{0}.
+
+This instruction is identical to \i{divi}, save that the latter performs signed division.
+
+If \r{s2}/\textit{imm2}, a division error is raised.
+
+\subsection{\i{remi} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction divides \r{s1}/\textit{imm1} by \r{s2}/\textit{imm2} using signed division and
+stores the remainder in \r{d}. At most one of the two source values may be an immediate; the
+immediate, if any, is encoded using \textit{r/imm} encoding. If the size of \r{d} is smaller than
+the remainder, the result will be truncated. Disregarding \textit{r/imm} encoding, no register may
+be \r{0}.
+
+This instruction is identical to \i{remu}, save that the latter performs unsigned division.
+
+If \r{s2}/\textit{imm2}, a division error is raised.
+
+\subsection{\i{remu} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction divides \r{s1}/\textit{imm1} by \r{s2}/\textit{imm2} using unsigned division and
+stores the remainder in \r{d}. At most one of the two source values may be an immediate; the
+immediate, if any, is encoded using \textit{r/imm} encoding. If the size of \r{d} is smaller than
+the remainder, the result will be truncated. Disregarding \textit{r/imm} encoding, no register may
+be \r{0}.
+
+This instruction is identical to \i{remi}, save that the latter performs signed division.
+
+If \r{s2}/\textit{imm2}, a division error is raised.
+
+\subsection{\i{shl} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction shifts \r{s1}/\textit{imm1} left by \r{s2}/\textit{imm2} and stores the result in
+\r{d}. At most one of the two source values may be an immediate; the immediate, if any, is encoded
+using \textit{r/imm} encoding. If the size of \r{d} is smaller than the result, the result will be
+truncated. Disregarding \textit{r/imm} encoding, no register may be \r{0}.
+
+Only the lower 6 bits of \r{s2}/\textit{imm2} are actually used.
+
+\subsection{\i{shr} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction shifts \r{s1}/\textit{imm1} right by \r{s2}/\textit{imm2} and stores the result in
+\r{d}. At most one of the two source values may be an immediate; the immediate, if any, is encoded
+using \textit{r/imm} encoding. If the size of \r{d} is smaller than the result, the result will be
+truncated. Disregarding \textit{r/imm} encoding, no register may be \r{0}.
+
+This instruction performs a logical (unsigned) shift.
+
+Only the lower 6 bits of \r{s2}/\textit{imm2} are actually used.
+
+\subsection{\i{sar} \r{d}, \r{s1}/\textit{imm1}, \r{s2}/\textit{imm2}}
+This instruction shifts \r{s1}/\textit{imm1} right by \r{s2}/\textit{imm2} and stores the result in
+\r{d}. At most one of the two source values may be an immediate; the immediate, if any, is encoded
+using \textit{r/imm} encoding. If the size of \r{d} is smaller than the result, the result will be
+truncated. Disregarding \textit{r/imm} encoding, no register may be \r{0}.
+
+This instruction performs an arithmetic (signed) shift.
+
+Only the lower 6 bits of \r{s2}/\textit{imm2} are actually used.
+
+\subsection{\i{call} \r{a}/\textit{addr}}
+This instruction calls the function at \textit{addr} or in register \r{a}. The function in
+\r{a}/\textit{addr} is encoded using \textit{r/addr} encoding. For argument/return registers see §
+\ref{sect:encoding}.
+
+\subsection{\i{jmp} \r{a}/\textit{addr}}
+This instruction unconditionally jumps to \textit{addr} or the address in register \r{a}. The target
+address \r{a}/\textit{addr} is encoded using \textit{r/addr} encoding.
+
+\subsection{\i{jnz} \r{c}, \r{a}/\textit{addr}}
+This instruction performs a conditional jumps on the value of \r{c} to \textit{addr} or the address
+in register \r{a}. The target address \r{a}/\textit{addr} is encoded using \textit{r/addr} encoding.
+
+\subsection{\i{ld} \r{d}, \textit{imm}}
+This instruction loads a value at \textit{imm} into register \r{d}. The size of \r{d} determines the
+number of bytes loaded from the address.
+
+\subsection{\i{ld} \r{d}, \r{s}, \textit{imm}}
+This instruction loads a value from the address stored in \r{s} offset by \textit{imm} into register
+\r{d}. The size of \r{d} determines the number of bytes loaded from the address.
+
+\subsection{\i{st} \textit{imm}, \r{s}}
+This instruction stores the value in register \r{s} into memory at the address \textit{imm}. The
+size of \r{s} determines the number of bytes stored to the address.
+
+\subsection{\i{st} \r{d}, \textit{imm}, \r{s}}
+This instruction stores the value in register \r{s} to the address in \r{d} offset by \textit{imm}.
+The size of \r{s} determines the number of bytes loaded from the address.
+
+\clearpage\section{Encoding}\label{sect:encoding}
+
+\end{document}
+
