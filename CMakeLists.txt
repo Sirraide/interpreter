@@ -98,11 +98,11 @@ endif()
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(options INTERFACE
         $<$<CONFIG:DEBUG>:-O0 -g3 -ggdb3 -rdynamic -DINTERP_DEBUG>
-        $<$<CONFIG:RELEASE>:-O3 -march=native -mtune-native>
+        $<$<CONFIG:RELEASE>:-O3 -march=native>
     )
     target_link_options(options INTERFACE
         $<$<CONFIG:DEBUG>:-O0 -g3 -ggdb3 -rdynamic -DINTERP_DEBUG>
-        $<$<CONFIG:RELEASE>:-O3 -march=native -mtune-native>
+        $<$<CONFIG:RELEASE>:-O3 -march=native>
     )
 else()
     target_compile_options(options INTERFACE
