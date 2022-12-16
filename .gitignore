@@ -10,3 +10,9 @@ cmake-build-*
 
 ## Valgrind.
 callgrind.out.*
+
+## TeX
+docs/*.aux
+docs/*.log
+docs/*.toc
+docs/*.pdf
