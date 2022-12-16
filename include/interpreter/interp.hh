@@ -37,10 +37,7 @@ using native_function = std::function<void(interpreter&)>;
 using word = u64;
 
 /// Register.
-enum struct reg : u8 {
-    arith_imm_32 = 0,
-    arith_imm_64 = 128,
-};
+enum struct reg : u8 { };
 
 /// Pointer.
 enum struct ptr : u64 {null = 0};
@@ -273,6 +270,9 @@ class interpreter : public ::interp_handle_t {
     void encode_arithmetic(opcode op, reg dest, reg r1, reg r2);
     void encode_arithmetic(opcode op, reg dest, reg src, word imm);
     void encode_arithmetic(opcode op, reg dest, word imm, reg src);
+
+    /// Decode a register operand that may also be an immediate.
+    word decode_register_operand(reg r);
 
     /// Decode an arithmetic instruction.
     struct arith_t {
