@@ -41,7 +41,12 @@ int main(int argc, char** argv) {
     interp.create_load(5_r, global);
     interp.create_load(6_r, 0_r, local);
 
+    /// Add the two.
     interp.create_add(2_r, 5_r, 6_r);
+
+    /// A perhaps rather odd way of truncating something.
+    interp.create_add(2_r, 2_r, 0b100000000000000000_w);
+    interp.create_xchg(2_r, 2_r | INTERP_SIZE_MASK_8);
     interp.create_call("display");
 
     /// Return 42.

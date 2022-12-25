@@ -95,7 +95,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 endif()
 
 ## Debug/Release flags.
-if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+if (NOT MSVC)
     target_compile_options(options INTERFACE
         $<$<CONFIG:DEBUG>:-O0 -g3 -ggdb3 -rdynamic -DINTERP_DEBUG>
         $<$<CONFIG:RELEASE>:-O3 -march=native>

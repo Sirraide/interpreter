@@ -237,11 +237,21 @@ interp_code interp_create_function(interp_handle handle, const char* name) {
     }
 }
 
+interp_code interp_create_xchg_rr(interp_handle handle, interp_reg r1, interp_reg r2) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        i->create_xchg(static_cast<reg>(r1), static_cast<reg>(r2));
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
 interp_address interp_current_address(interp_handle handle) {
     auto i = static_cast<interp::interpreter*>(handle);
     return i->current_addr();
 }
-
 
 /// ===========================================================================
 ///  Arithmetic and bitwise instructions.

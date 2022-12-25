@@ -575,6 +575,16 @@ void interp::interpreter::create_function(const std::string& name) {
     }
 }
 
+void interp::interpreter::create_xchg(reg r1, reg r2) {
+    /// Make sure the registers are valid.
+    check_regs(r1, r2);
+
+    /// Encode the instruction.
+    bytecode.push_back(+opcode::xchg);
+    bytecode.push_back(+r1);
+    bytecode.push_back(+r2);
+}
+
 auto interp::interpreter::current_addr() const -> addr { return bytecode.size(); }
 
 /// ===========================================================================
@@ -601,7 +611,7 @@ interp::word interp::interpreter::run() {
     for (;;) {
         if (ip >= bytecode.size()) [[unlikely]] { throw error("Instruction pointer out of bounds."); }
         switch (auto op = static_cast<opcode>(bytecode[ip++])) {
-            static_assert(opcode_t(opcode::max_opcode) == 43);
+            static_assert(opcode_t(opcode::max_opcode) == 44);
             default: throw error("Invalid opcode {}", u8(op));
 
             /// Do nothing.
@@ -811,6 +821,15 @@ interp::word interp::interpreter::run() {
                 if (target >= bytecode.size()) [[unlikely]] { throw error("Jump target out of bounds"); }
                 if (read_register(r)) ip = target;
             } break;
+
+            /// Exchange the values of two registers.
+            case opcode::xchg: {
+                auto r1 = static_cast<reg>(bytecode[ip++]);
+                auto r2 = static_cast<reg>(bytecode[ip++]);
+                auto tmp = read_register(r1);
+                set_register(r1, read_register(r2));
+                set_register(r2, tmp);
+            } break;
         }
     }
 }
@@ -983,7 +1002,7 @@ std::string interp::interpreter::disassemble() const {
 
         /// Print the instruction mnemonic.
         switch (auto op = static_cast<opcode>(bytecode[i++])) {
-            static_assert(opcode_t(opcode::max_opcode) == 43);
+            static_assert(opcode_t(opcode::max_opcode) == 44);
             default:
                 padding(1);
                 if (i == 1 and op == opcode::invalid) result += fmt::format(fg(white), " .sentinel\n");
@@ -1168,6 +1187,14 @@ std::string interp::interpreter::disassemble() const {
                 print_word(orange, sz);
                 padding(sz + 2);
                 result += fmt::format(" {} {}{} {:08x}\n", styled("jnz ", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
+            } break;
+
+            case opcode::xchg: {
+                auto r1 = bytecode[i++];
+                auto r2 = bytecode[i++];
+                result += fmt::format(" {:02x} {:02x}", rbyte(r1), rbyte(r2));
+                padding(3);
+                result += fmt::format(" {} {}{} {}\n", styled("xchg", fg(yellow)), reg_str(r1), comma, reg_str(r2));
             } break;
         }
     }

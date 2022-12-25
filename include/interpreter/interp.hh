@@ -153,6 +153,9 @@ enum struct opcode : opcode_t {
     store_rel32,
     store_rel64,
 
+    /// Swap two registers. This is also used for truncation.
+    xchg,
+
     /// For sanity checks.
     max_opcode
 };
@@ -415,6 +418,12 @@ public:
 
     /// Create a function that can be called.
     void create_function(const std::string& name);
+
+    /// Exchange the values of two registers.
+    ///
+    /// If both registers are the same, but the sizes are different, then
+    /// the register is truncated to the smaller size.
+    void create_xchg(reg r1, reg r2);
 
     /// Get the current address.
     addr current_addr() const;

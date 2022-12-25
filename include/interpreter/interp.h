@@ -216,6 +216,17 @@ interp_code interp_create_branch_ifnz(interp_handle handle, interp_reg cond, int
 /// \return INTERP_OK (0) on success; a nonzero value on failure.
 interp_code interp_create_function(interp_handle handle, const char* name);
 
+/// Emit an instruction to exchange two registers.
+///
+/// If r1 and r2 represent the same register, but their sizes differ, then the
+/// value in that register is truncated to the smaller size.
+///
+/// \param handle The interpreter handle.
+/// \param r1 The first register.
+/// \param r2 The second register.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_xchg_rr(interp_handle handle, interp_reg r1, interp_reg r2);
+
 /// Get the current address.
 ///
 /// \param handle The interpreter handle.
