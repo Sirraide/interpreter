@@ -18,6 +18,12 @@ namespace ranges = std::ranges;
 namespace views = std::views;
 using namespace interp::integers;
 
+/// Mask used to indicate that a pointer is a native pointer.
+constexpr inline interp::word host_ptr_mask = interp::word(1ull << 63ull);
+
+/// Hard cap on memory. If we allocate more then this in the VM, the encoding breaks.
+constexpr inline usz memory_cap = ~host_ptr_mask;
+
 /// ===========================================================================
 ///  Miscellaneous.
 /// ===========================================================================
@@ -76,14 +82,17 @@ interp::word interp::interpreter::arg(usz index, interp_size_mask sz) const {
 
 interp::word interp::interpreter::load_mem(ptr p, usz sz) const {
     /// Make sure the pointer is valid.
-    if (not +p or +p >= _memory_.size()) [[unlikely]] { throw error("Segmentation fault. Invalid pointer: {:#08x}", +p); }
+    const bool is_host_ptr = +p & host_ptr_mask;
+    if (not is_host_ptr and (not +p or +p >= _memory_.size())) [[unlikely]]
+        throw error("Segmentation fault. Invalid pointer: {:#08x}", +p);
 
     /// Return the value.
+    word ptr = is_host_ptr ? +p & ~host_ptr_mask : reinterpret_cast<word>(_memory_.data()) + +p;
     switch (sz) {
-        case 1: return _memory_[+p];
-        case 2: return *reinterpret_cast<const u16*>(_memory_.data() + +p);
-        case 4: return *reinterpret_cast<const u32*>(_memory_.data() + +p);
-        case 8: return *reinterpret_cast<const u64*>(_memory_.data() + +p);
+        case 1: return *reinterpret_cast<u8*>(ptr);
+        case 2: return *reinterpret_cast<const u16*>(ptr);
+        case 4: return *reinterpret_cast<const u32*>(ptr);
+        case 8: return *reinterpret_cast<const u64*>(ptr);
         default: throw error("Invalid size: {}", sz);
     }
 }
@@ -114,14 +123,17 @@ void interp::interpreter::set_return_value(word value) {
 
 void interp::interpreter::store_mem(ptr p, word value, usz sz) {
     /// Make sure the pointer is valid.
-    if (not +p or +p >= _memory_.size()) [[unlikely]] { throw error("Segmentation fault. Invalid pointer: {:#08x}", +p); }
+    const bool is_host_ptr = +p & host_ptr_mask;
+    if (not is_host_ptr and (not +p or +p >= _memory_.size())) [[unlikely]]
+        throw error("Segmentation fault. Invalid pointer: {:#08x}", +p);
 
     /// Store the value.
+    word ptr = is_host_ptr ? +p & ~host_ptr_mask : reinterpret_cast<word>(_memory_.data()) + +p;
     switch (sz) {
-        case 1: _memory_[+p] = static_cast<u8>(value); break;
-        case 2: *reinterpret_cast<u16*>(_memory_.data() + +p) = static_cast<u16>(value); break;
-        case 4: *reinterpret_cast<u32*>(_memory_.data() + +p) = static_cast<u32>(value); break;
-        case 8: *reinterpret_cast<u64*>(_memory_.data() + +p) = static_cast<u64>(value); break;
+        case 1: *reinterpret_cast<u8*>(ptr) = static_cast<u8>(value); break;
+        case 2: *reinterpret_cast<u16*>(ptr) = static_cast<u16>(value); break;
+        case 4: *reinterpret_cast<u32*>(ptr) = static_cast<u32>(value); break;
+        case 8: *reinterpret_cast<u64*>(ptr) = static_cast<u64>(value); break;
         default: throw error("Invalid size: {}", sz);
     }
 }
@@ -391,7 +403,7 @@ interp::word interp::interpreter::create_alloca(usz size) {
 /// Create a global variable.
 interp::ptr interp::interpreter::create_global(usz size) {
     size = std::max(size, sizeof(word));
-    if (+gp + size > max_memory) throw error("Global memory overflow.");
+    if (+gp + size > std::min(max_memory, memory_cap)) throw error("Global memory overflow.");
     auto p = gp;
     gp = static_cast<ptr>(+gp + size);
     return p;
@@ -400,7 +412,7 @@ interp::ptr interp::interpreter::create_global(usz size) {
 /// Load from memory.
 void interp::interpreter::create_load(reg dest, ptr src) {
     /// Check that the pointer is valid.
-    if (not +src or +src >= max_memory) throw error("Segmentation fault. Invalid pointer: {}", +src);
+    if (not +src or +src >= std::min(max_memory, memory_cap)) throw error("Segmentation fault. Invalid pointer: {}", +src);
 
     /// Make sure the destination is a register.
     check_regs(dest);
@@ -415,6 +427,41 @@ void interp::interpreter::create_load(reg dest, ptr src) {
     bytecode.push_back(+dest);
     write_word(bytecode, +src);
 }
+
+/// Load from native memory.
+///
+/// The encoding of this instruction is an implementation detail
+/// and not part of the interface. That the pointer operand is a
+/// host pointer is encoded by setting the MSB of the pointer.
+void interp::interpreter::create_load(reg dest, integer auto* src) {
+    /// Make sure the destination is a register.
+    check_regs(dest);
+
+    /// Clear the register flags.
+    dest = reg(+dest & reg_mask);
+
+    /// Set the appropriate flag.
+    switch (sizeof(*src)) {
+        case 1: dest = reg(+dest | INTERP_SIZE_MASK_8); break;
+        case 2: dest = reg(+dest | INTERP_SIZE_MASK_16); break;
+        case 4: dest = reg(+dest | INTERP_SIZE_MASK_32); break;
+        case 8: dest = reg(+dest | INTERP_SIZE_MASK_64); break;
+        default: std::unreachable();
+    }
+
+    /// Write the opcode.
+    bytecode.push_back(+opcode::load64);
+
+    /// Write the destination register and source address.
+    bytecode.push_back(+dest);
+    write_word(bytecode, reinterpret_cast<word>(src) | host_ptr_mask);
+}
+
+/// Explicitly instantiate all supported versions of this function.
+template void interp::interpreter::create_load<u8>(reg, u8*);
+template void interp::interpreter::create_load<u16>(reg, u16*);
+template void interp::interpreter::create_load<u32>(reg, u32*);
+template void interp::interpreter::create_load<u64>(reg, u64*);
 
 /// Indirect load from memory.
 void interp::interpreter::create_load(reg dest, reg src, word offs) {
@@ -438,7 +485,7 @@ void interp::interpreter::create_load(reg dest, reg src, word offs) {
 /// Store to memory.
 void interp::interpreter::create_store(ptr dest, reg src) {
     /// Check that the pointer is valid.
-    if (not +dest or +dest >= max_memory) throw error("Segmentation fault. Invalid pointer: {}", +dest);
+    if (not +dest or +dest >= std::min(max_memory, memory_cap)) throw error("Segmentation fault. Invalid pointer: {}", +dest);
 
     /// Make sure the source is a register.
     check_regs(src);
@@ -453,6 +500,41 @@ void interp::interpreter::create_store(ptr dest, reg src) {
     bytecode.push_back(+src);
     write_word(bytecode, +dest);
 }
+
+/// Store from native memory.
+///
+/// The encoding of this instruction is an implementation detail
+/// and not part of the interface. That the pointer operand is a
+/// host pointer is encoded by setting the MSB of the pointer.
+void interp::interpreter::create_store(integer auto* dest, reg src) {
+    /// Make sure the destination is a register.
+    check_regs(src);
+
+    /// Clear the register flags.
+    src = reg(+src & reg_mask);
+
+    /// Set the appropriate flag.
+    switch (sizeof(*dest)) {
+        case 1: src = reg(+src | INTERP_SIZE_MASK_8); break;
+        case 2: src = reg(+src | INTERP_SIZE_MASK_16); break;
+        case 4: src = reg(+src | INTERP_SIZE_MASK_32); break;
+        case 8: src = reg(+src | INTERP_SIZE_MASK_64); break;
+        default: std::unreachable();
+    }
+
+    /// Write the opcode.
+    bytecode.push_back(+opcode::store64);
+
+    /// Write the destination register and source address.
+    bytecode.push_back(+src);
+    write_word(bytecode, reinterpret_cast<word>(dest) | host_ptr_mask);
+}
+
+/// Explicitly instantiate all supported versions of this function.
+template void interp::interpreter::create_store<u8>(u8*, reg);
+template void interp::interpreter::create_store<u16>(u16*, reg);
+template void interp::interpreter::create_store<u32>(u32*, reg);
+template void interp::interpreter::create_store<u64>(u64*, reg);
 
 /// Indirect store to memory.
 void interp::interpreter::create_store(reg dest, word offs, reg src) {
@@ -592,6 +674,7 @@ auto interp::interpreter::current_addr() const -> addr { return bytecode.size();
 /// ===========================================================================
 interp::word interp::interpreter::run() {
     /// Make sure the memory has the right size.
+    tempset max_memory = std::min(max_memory, memory_cap);
     _memory_.resize(max_memory);
 
     /// Set the instruction pointer to the entry point.
@@ -858,7 +941,8 @@ std::string interp::interpreter::disassemble() const {
     padd_to = (padd_to + (padd_to & 1)) / 2;*/
 
     /// Padding.
-    static constexpr usz pad_to = 8;
+    static constexpr usz pad_to = 9;
+    static constexpr usz max_bytes_in_line = 8;
 
     /// Declare this here since it’s used by some of the lambdas below.
     usz i = ip_start_addr;
@@ -907,30 +991,25 @@ std::string interp::interpreter::disassemble() const {
     };
 
     /// Print a word.
-    const auto print_word = [&](auto c, usz sz) {
-        switch (sz) {
-            case 1:
-                result += fmt::format(fg(c), " {:02x}", bytecode[i]);
-                break;
-
-            case 2:
-                result += fmt::format(fg(c), " {:02x} {:02x}", bytecode[i], bytecode[i + 1]);
-                break;
-
-            case 4:
-                result += fmt::format(fg(c), " {:02x} {:02x} {:02x} {:02x}", //
-                                      bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3]);
-                break;
-
-            case 8:
-                result += fmt::format(fg(c), " {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",                //
-                                      bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3], bytecode[i + 4], //
-                                      bytecode[i + 5], bytecode[i + 6], bytecode[i + 7]);
-                break;
-
-            default: result += fmt::format(fg(white), "???");
-        }
+    const auto print_word = [&](auto c, usz sz, const usz bytes_printed_in_line) {
+        const usz can_print = max_bytes_in_line - bytes_printed_in_line;
+        for (const u8* start = bytecode.data() + i, *end = start + std::min(sz, can_print); start != end; ++start)
+            result += fmt::format(fg(c), " {:02x}", *start);
         i += sz;
+        for (usz bytes = bytes_printed_in_line + std::min(sz, can_print); bytes < pad_to; bytes++) result += "   ";
+    };
+
+    /// Print the rest of a word.
+    const auto print_rest_of_word = [&](auto c, usz sz, usz bytes_printed_in_line) {
+        usz could_print = max_bytes_in_line - bytes_printed_in_line;
+        usz to_print = could_print >= sz ? 0 : sz - could_print;
+        if (to_print) {
+            usz start_offset = i - sz + could_print;
+            result += fmt::format(fg(orange), "[{:08x}]:", start_offset);
+            for (const u8* start = bytecode.data() + start_offset; to_print; --to_print, ++start)
+                result += fmt::format(fg(c), " {:02x}", *start);
+            result += "\n";
+        }
     };
 
     /// Print an arithmetic instruction.
@@ -958,8 +1037,7 @@ std::string interp::interpreter::disassemble() const {
         /// Extract the immediate value and print the first 4 bytes of the immediate if we have one.
         const auto imm_sz = imm ? register_size(imm_reg) : 0;
         const word imm_value = imm ? read_word(imm_sz) : 0;
-        if (imm) print_word(magenta, std::min<usz>(imm_sz, 4));
-        padding(imm_sz + 4);
+        print_word(magenta, imm_sz, 4);
 
         /// Print the mnemonic.
         result += fmt::format(" {} {}", styled(str, fg(yellow)), reg_str(dest));
@@ -971,12 +1049,13 @@ std::string interp::interpreter::disassemble() const {
                       : fmt::format("{} {}\n", comma, reg_str(src2));
 
         /// Print 4 more bytes if we have a a 64-bit immediate.
-        if (imm and imm_sz == 8) {
-            result += fmt::format(fg(orange), "[{:08x}]: ", i);
-            result += fmt::format(fg(magenta), "{:02x} {:02x} {:02x} {:02x}\n", //
-                                  bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3]);
-            i += 4;
-        }
+        print_rest_of_word(magenta, imm_sz, 4);
+    };
+
+    /// Stringify a pointer.
+    auto pointer = [&](addr a) {
+        if (a & host_ptr_mask) return fmt::format(fg(dark_green), "native:{:#08x}", a & ~host_ptr_mask);
+        return fmt::format(fg(dark_green), "{}", a);
     };
 
     /// Iterate over the bytecode and disassemble each instruction.
@@ -1029,22 +1108,16 @@ std::string interp::interpreter::disassemble() const {
                 /// Extract the immediate value and print the first 4 bytes of the immediate if we have one.
                 const auto sz = imm ? register_size(static_cast<reg>(src)) : 0;
                 word imm_value = imm ? read_word(sz) : 0;
-                if (imm) print_word(magenta, std::min<usz>(sz, 4));
+                print_word(magenta, sz, 3);
 
                 /// Print the mnemonic.
-                padding(std::min<usz>(sz, 4) + 3);
-                result += fmt::format(" {}  {}", styled("mov", fg(yellow)), reg_str(dest));
+                result += fmt::format(" {} {}", styled("mov", fg(yellow)), reg_str(dest));
                 result += imm
                               ? fmt::format("{} {}\n", comma, styled(imm_value, fg(magenta)))
                               : fmt::format("{} {}\n", comma, reg_str(src));
 
                 /// Print 4 more bytes if we have a a 64-bit immediate.
-                if (imm and sz == 8) {
-                    result += fmt::format(fg(orange), "[{:08x}]: ", i);
-                    result += fmt::format(fg(magenta), "{:02x} {:02x} {:02x} {:02x}\n", //
-                                          bytecode[i], bytecode[i + 1], bytecode[i + 2], bytecode[i + 3]);
-                    i += 4;
-                }
+                print_rest_of_word(magenta, sz, 3);
             } break;
 
             case opcode::load8:
@@ -1058,11 +1131,11 @@ std::string interp::interpreter::disassemble() const {
                 /// Print the address.
                 auto sz = address_operand_size(op);
                 auto addr = read_word(sz);
-                print_word(dark_green, sz);
+                print_word(dark_green, sz, 2);
 
                 /// Align and print the mnemonic.
-                padding(sz + 2);
-                result += fmt::format(fg(yellow), " ld   {}{} {}{}{}\n", reg_str(regnum), comma, lbrack, styled(addr, fg(dark_green)), rbrack);
+                result += fmt::format(fg(yellow), " ld {}{} {}{}{}\n", reg_str(regnum), comma, lbrack, pointer(addr), rbrack);
+                print_rest_of_word(dark_green, sz, 2);
             } break;
 
             case opcode::load_rel8:
@@ -1077,11 +1150,11 @@ std::string interp::interpreter::disassemble() const {
                 /// Print the address.
                 auto sz = address_operand_size(op);
                 auto addr = read_word(sz);
-                print_word(dark_green, sz);
+                print_word(dark_green, sz, 3);
 
                 /// Align and print the mnemonic.
-                padding(sz + 3);
-                result += fmt::format(fg(yellow), " ld   {}{} {}{} {} {}{}\n", reg_str(dest), comma, lbrack, reg_str(src), plus, styled(addr, fg(dark_green)), rbrack);
+                result += fmt::format(fg(yellow), " ld {}{} {}{} {} {}{}\n", reg_str(dest), comma, lbrack, reg_str(src), plus, styled(addr, fg(dark_green)), rbrack);
+                print_rest_of_word(dark_green, sz, 3);
             } break;
 
             case opcode::store8:
@@ -1095,11 +1168,11 @@ std::string interp::interpreter::disassemble() const {
                 /// Print the address.
                 auto sz = address_operand_size(op);
                 auto addr = read_word(sz);
-                print_word(dark_green, sz);
+                print_word(dark_green, sz, 2);
 
                 /// Align and print the mnemonic.
-                padding(sz + 2);
-                result += fmt::format(fg(yellow), " st   {}{}{}{} {}\n", lbrack, styled(addr, fg(dark_green)), rbrack, comma, reg_str(regnum));
+                result += fmt::format(fg(yellow), " st {}{}{}{} {}\n", lbrack, pointer(addr), rbrack, comma, reg_str(regnum));
+                print_rest_of_word(dark_green, sz, 2);
             } break;
 
             case opcode::store_rel8:
@@ -1114,24 +1187,24 @@ std::string interp::interpreter::disassemble() const {
                 /// Print the address.
                 auto sz = address_operand_size(op);
                 auto addr = read_word(sz);
-                print_word(dark_green, sz);
+                print_word(dark_green, sz, 3);
 
                 /// Align and print the mnemonic.
-                padding(sz + 3);
-                result += fmt::format(fg(yellow), " st   {}{} {} {}{}{} {}\n", lbrack, reg_str(dest), plus, styled(addr, fg(dark_green)), rbrack, comma, reg_str(src));
+                result += fmt::format(fg(yellow), " st {}{} {} {}{}{} {}\n", lbrack, reg_str(dest), plus, styled(addr, fg(dark_green)), rbrack, comma, reg_str(src));
+                print_rest_of_word(dark_green, sz, 3);
             } break;
 
-            case opcode::add: print_arith("add "); break;
-            case opcode::sub: print_arith("sub "); break;
+            case opcode::add: print_arith("add"); break;
+            case opcode::sub: print_arith("sub"); break;
             case opcode::muli: print_arith("muli"); break;
             case opcode::mulu: print_arith("mulu"); break;
             case opcode::divi: print_arith("divi"); break;
             case opcode::divu: print_arith("divu"); break;
             case opcode::remi: print_arith("remi"); break;
             case opcode::remu: print_arith("remu"); break;
-            case opcode::shift_left: print_arith("shl "); break;
-            case opcode::shift_right_arithmetic: print_arith("sar "); break;
-            case opcode::shift_right_logical: print_arith("shr "); break;
+            case opcode::shift_left: print_arith("shl"); break;
+            case opcode::shift_right_arithmetic: print_arith("sar"); break;
+            case opcode::shift_right_logical: print_arith("shr"); break;
 
             case opcode::call8:
             case opcode::call16:
@@ -1139,8 +1212,7 @@ std::string interp::interpreter::disassemble() const {
             case opcode::call64: {
                 auto sz = address_operand_size(op);
                 auto index = read_word(sz);
-                print_word(green, sz);
-                padding(sz + 1);
+                print_word(green, sz, 1);
 
                 /// Try and resolve the function name.
                 auto it = ranges::find_if(functions_map, [&](auto&& f) { return f.second == index; });
@@ -1156,13 +1228,14 @@ std::string interp::interpreter::disassemble() const {
                     if (std::holds_alternative<native_function>(functions[index].address)) {
                         result += fmt::format(fg(orange), " @ native\n");
                     } else if (islib) {
-                        result += fmt::format(fg(yellow), " call {} {}\n",                                            //
+                        result += fmt::format(fg(yellow), " call {} {}\n",                                                  //
                                               styled(std::get<library_function>(functions[index].address).name, fg(green)), //
                                               styled("@ library", fg(orange)));
                     } else {
                         result += fmt::format(fg(orange), " @ {:08x}\n", std::get<addr>(functions[index].address));
                     }
                 } else result += fmt::format(fg(yellow), " call {}\n", styled(index, fg(white)));
+                print_rest_of_word(green, sz, 1);
             } break;
 
             case opcode::jmp8:
@@ -1171,9 +1244,9 @@ std::string interp::interpreter::disassemble() const {
             case opcode::jmp64: {
                 auto sz = address_operand_size(op);
                 auto a = read_word(sz);
-                print_word(orange, sz);
-                padding(sz + 1);
-                result += fmt::format(" {} {:08x}\n", styled("jmp ", fg(yellow)), styled(a, fg(orange)));
+                print_word(orange, sz, 1);
+                result += fmt::format(" {} {:08x}\n", styled("jmp", fg(yellow)), styled(a, fg(orange)));
+                print_rest_of_word(orange, sz, 1);
             } break;
 
             case opcode::jnz8:
@@ -1184,9 +1257,9 @@ std::string interp::interpreter::disassemble() const {
                 result += fmt::format(fg(red), " {:02x}", r);
                 auto sz = address_operand_size(op);
                 auto a = read_word(sz);
-                print_word(orange, sz);
-                padding(sz + 2);
-                result += fmt::format(" {} {}{} {:08x}\n", styled("jnz ", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
+                print_word(orange, sz, 2);
+                result += fmt::format(" {} {}{} {:08x}\n", styled("jnz", fg(yellow)), reg_str(r), comma, styled(a, fg(orange)));
+                print_rest_of_word(orange, sz, 2);
             } break;
 
             case opcode::xchg: {

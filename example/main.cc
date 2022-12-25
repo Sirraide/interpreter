@@ -45,12 +45,19 @@ int main(int argc, char** argv) {
     interp.create_add(2_r, 5_r, 6_r);
 
     /// A perhaps rather odd way of truncating something.
-    interp.create_add(2_r, 2_r, 0b100000000000000000_w);
+    interp.create_add(2_r, 2_r, 0b10000000000000000000000000000000000000_w);
     interp.create_xchg(2_r, 2_r | INTERP_SIZE_MASK_8);
     interp.create_call("display");
 
+
+    /// Demonstrate that we can load from/store to host memory.
+    interp::word w1 = 20, w2 = 22, result;
+    interp.create_load(3_r, &w1);
+    interp.create_load(4_r, &w2);
+    interp.create_add(1_r, 3_r, 4_r);
+    interp.create_store(&result, 1_r);
+
     /// Return 42.
-    interp.create_move(1_r, 42_w);
     interp.create_return();
 
     /// Define a function in code.
@@ -68,6 +75,5 @@ int main(int argc, char** argv) {
         std::exit(0);
     }
 
-    /// Run.
-    return int(interp.run());
+    return result == interp.run();
 }

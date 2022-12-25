@@ -37,10 +37,10 @@ using native_function = std::function<void(interpreter&)>;
 using word = u64;
 
 /// Register.
-enum struct reg : u8 { };
+enum struct reg : u8 {};
 
 /// Pointer.
-enum struct ptr : u64 {null = 0};
+enum struct ptr : u64 { null = 0 };
 
 /// Constants.
 constexpr static usz ip_start_addr = 1;
@@ -183,6 +183,13 @@ struct error : std::runtime_error {
     error(fmt::format_string<arguments...> fmt, arguments&&... args)
         : std::runtime_error(fmt::format(fmt, std::forward<arguments>(args)...)) {}
 };
+
+/// Integer types supported by the interpreter.
+template <typename t>
+concept integer = std::same_as<std::make_unsigned_t<t>, u8> ||  //
+                  std::same_as<std::make_unsigned_t<t>, u16> || //
+                  std::same_as<std::make_unsigned_t<t>, u32> || //
+                  std::same_as<std::make_unsigned_t<t>, u64>;
 
 /// ===========================================================================
 ///  Interpreter struct.
@@ -380,6 +387,9 @@ public:
     /// Load from memory.
     void create_load(reg dest, ptr src);
 
+    /// Load from native memory.
+    void create_load(reg dest, integer auto* src);
+
     /// Indirect load from memory.
     ///
     /// \param dest The destination register.
@@ -389,6 +399,9 @@ public:
 
     /// Store to memory.
     void create_store(ptr dest, reg src);
+
+    /// Store to native memory.
+    void create_store(integer auto* dest, reg src);
 
     /// Indirect store to memory.
     ///
