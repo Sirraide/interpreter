@@ -156,6 +156,135 @@ interp_code interp_library_call_unsafe(
 }
 
 /// ===========================================================================
+///  Memory.
+/// ===========================================================================
+interp_code interp_create_alloca(interp_handle handle, size_t size, interp_address* address) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        if (address) *address = i->create_alloca(size);
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+interp_code interp_create_global(interp_handle handle, size_t size, interp_address* address) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        if (address) *address = +i->create_global(size);
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+interp_code interp_create_load(interp_handle handle, interp_reg r, interp_address p) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        i->create_load(static_cast<interp::reg>(r), static_cast<interp::ptr>(p));
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+/// Emit a load from native memory.
+///
+/// \param dest The register to load into.
+/// \param src The native address to load from.
+/// \param sz The size of the load.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_load_native(
+    interp_handle handle,
+    interp_reg dest,
+    void* src,
+    interp_size_mask sz
+) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        switch (sz) {
+            case INTERP_SIZE_MASK_64: i->create_load(static_cast<interp::reg>(dest), static_cast<u64*>(src)); break;
+            case INTERP_SIZE_MASK_32: i->create_load(static_cast<interp::reg>(dest), static_cast<u32*>(src)); break;
+            case INTERP_SIZE_MASK_16: i->create_load(static_cast<interp::reg>(dest), static_cast<u16*>(src)); break;
+            case INTERP_SIZE_MASK_8: i->create_load(static_cast<interp::reg>(dest), static_cast<u8*>(src));  break;
+            default: throw std::runtime_error(fmt::format("Invalid size: {}", static_cast<int>(sz)));
+        }
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+interp_code interp_create_load_indirect(
+    interp_handle handle,
+    interp_reg dest,
+    interp_reg src,
+    interp_word offs
+) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        i->create_load(static_cast<interp::reg>(dest), static_cast<interp::reg>(src), offs);
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+interp_code interp_create_store(interp_handle handle, interp_address dest, interp_reg src) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        i->create_store(static_cast<interp::ptr>(dest), static_cast<interp::reg>(src));
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+interp_code interp_create_store_native(
+    interp_handle handle,
+    void* dest,
+    interp_reg src,
+    interp_size_mask sz
+) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        switch (sz) {
+            case INTERP_SIZE_MASK_64: i->create_store(static_cast<u64*>(dest), static_cast<interp::reg>(src)); break;
+            case INTERP_SIZE_MASK_32: i->create_store(static_cast<u32*>(dest), static_cast<interp::reg>(src)); break;
+            case INTERP_SIZE_MASK_16: i->create_store(static_cast<u16*>(dest), static_cast<interp::reg>(src)); break;
+            case INTERP_SIZE_MASK_8: i->create_store(static_cast<u8*>(dest), static_cast<interp::reg>(src));  break;
+            default: throw std::runtime_error(fmt::format("Invalid size: {}", static_cast<int>(sz)));
+        }
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+interp_code interp_create_store_indirect(
+    interp_handle handle,
+    interp_reg dest,
+    interp_word offs,
+    interp_reg src
+) {
+    auto i = static_cast<interp::interpreter*>(handle);
+    try {
+        i->create_store(static_cast<interp::reg>(dest), offs, static_cast<interp::reg>(src));
+        return INTERP_OK;
+    } catch (const std::exception& e) {
+        i->last_error = e.what();
+        return INTERP_ERR;
+    }
+}
+
+/// ===========================================================================
 ///  Operations.
 /// ===========================================================================
 void interp_create_return(interp_handle handle) {

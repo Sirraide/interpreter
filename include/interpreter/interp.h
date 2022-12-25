@@ -1,8 +1,8 @@
 #ifndef INTERPRETER_INTERP_H
 #define INTERPRETER_INTERP_H
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -154,6 +154,157 @@ interp_code interp_library_call_unsafe(
     const char* name,
     const char* func,
     size_t argc
+);
+
+/// ===========================================================================
+///  Memory.
+/// ===========================================================================
+/// Allocate memory on the stack.
+///
+/// This allocates *at least* `size` bytes, but may allocate more.
+///
+/// \param handle The interpreter handle.
+/// \param size The size of the allocation.
+/// \param address Out parameter for the address of the allocation.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_alloca(interp_handle handle, size_t size, interp_address* address);
+
+/// Create a global variable.
+///
+/// This allocates *at least* `size` bytes, but may allocate more.
+///
+/// \param handle The interpreter handle.
+/// \param size The size of the allocation.
+/// \param address Out parameter for a global pointer corresponding to
+///     the start of the allocation.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_global(interp_handle handle, size_t size, interp_address* address);
+
+/// Emit a direct load from memory.
+///
+/// \param handle The interpreter handle.
+/// \param reg The register to load into.
+/// \param ptr The address to load from.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_load(interp_handle handle, interp_reg reg, interp_address ptr);
+
+/// Emit a load from native memory.
+///
+/// \param dest The register to load into.
+/// \param src The native address to load from.
+/// \param sz The size of the load.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_load_native(
+    interp_handle handle,
+    interp_reg dest,
+    void* src,
+    interp_size_mask sz
+);
+
+/// Wrapper for interp_create_load_native() that loads a value of type `uint8_t`.
+inline interp_code interp_create_load_native_u8(
+    interp_handle handle,
+    interp_reg dest,
+    uint8_t* src
+) { return interp_create_load_native(handle, dest, src, INTERP_SIZE_MASK_8); }
+
+/// Wrapper for interp_create_load_native() that loads a value of type `uint16_t`.
+inline interp_code interp_create_load_native_u16(
+    interp_handle handle,
+    interp_reg dest,
+    uint16_t* src
+) { return interp_create_load_native(handle, dest, src, INTERP_SIZE_MASK_16); }
+
+/// Wrapper for interp_create_load_native() that loads a value of type `uint32_t`.
+inline interp_code interp_create_load_native_u32(
+    interp_handle handle,
+    interp_reg dest,
+    uint32_t* src
+) { return interp_create_load_native(handle, dest, src, INTERP_SIZE_MASK_32); }
+
+/// Wrapper for interp_create_load_native() that loads a value of type `uint64_t`.
+inline interp_code interp_create_load_native_u64(
+    interp_handle handle,
+    interp_reg dest,
+    uint64_t* src
+) { return interp_create_load_native(handle, dest, src, INTERP_SIZE_MASK_64); }
+
+/// Emit an indirect load from memory.
+///
+/// \param handle The interpreter handle.
+/// \param dest The register to load into.
+/// \param src src The register containing the base address. r0 represents the stack base pointer.
+/// \param offs The offset from the base address.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_load_indirect(
+    interp_handle handle,
+    interp_reg dest,
+    interp_reg src,
+    interp_word offs
+);
+
+/// Emit a store to memory.
+///
+/// \param handle The interpreter handle.
+/// \param dest The address to store to.
+/// \param src The register containing the value to store.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_store(interp_handle handle, interp_address dest, interp_reg src);
+
+/// Emit a store to native memory.
+///
+/// \param handle The interpreter handle.
+/// \param dest The native address to store to.
+/// \param src The register containing the value to store.
+/// \param sz The size of the store.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_store_native(
+    interp_handle handle,
+    void* dest,
+    interp_reg src,
+    interp_size_mask sz
+);
+
+/// Wrapper for interp_create_store_native() that stores a value of type `uint8_t`.
+inline interp_code interp_create_store_native_u8(
+    interp_handle handle,
+    uint8_t* dest,
+    interp_reg src
+) { return interp_create_store_native(handle, dest, src, INTERP_SIZE_MASK_8); }
+
+/// Wrapper for interp_create_store_native() that stores a value of type `uint16_t`.
+inline interp_code interp_create_store_native_u16(
+    interp_handle handle,
+    uint16_t* dest,
+    interp_reg src
+) { return interp_create_store_native(handle, dest, src, INTERP_SIZE_MASK_16); }
+
+/// Wrapper for interp_create_store_native() that stores a value of type `uint32_t`.
+inline interp_code interp_create_store_native_u32(
+    interp_handle handle,
+    uint32_t* dest,
+    interp_reg src
+) { return interp_create_store_native(handle, dest, src, INTERP_SIZE_MASK_32); }
+
+/// Wrapper for interp_create_store_native() that stores a value of type `uint64_t`.
+inline interp_code interp_create_store_native_u64(
+    interp_handle handle,
+    uint64_t* dest,
+    interp_reg src
+) { return interp_create_store_native(handle, dest, src, INTERP_SIZE_MASK_64); }
+
+/// Emit an indirect store to memory.
+///
+/// \param handle The interpreter handle.
+/// \param dest The register containing the base address. r0 represents the stack base pointer.
+/// \param offs The offset from the base address.
+/// \param src The register containing the value to store.
+/// \return INTERP_OK (0) on success; a nonzero value on failure.
+interp_code interp_create_store_indirect(
+    interp_handle handle,
+    interp_reg dest,
+    interp_word offs,
+    interp_reg src
 );
 
 /// ===========================================================================
